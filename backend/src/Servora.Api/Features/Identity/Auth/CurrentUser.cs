@@ -45,7 +45,8 @@ public static class CurrentUser
         string DefaultLocale,
         string TimeZone,
         string CurrencyCode,
-        bool SetupCompleted);
+        bool SetupCompleted,
+        WorkspaceFeatureConfig FeatureConfig);
 
     public sealed record UserProfile(
         int Id,
@@ -84,6 +85,7 @@ public static class CurrentUser
                 member.Shop.OperatingMode,
                 member.Shop.IndustryBlueprintKey,
                 member.Shop.TerminologyConfig,
+                member.Shop.FeatureConfig,
                 member.Shop.DefaultLocale,
                 member.Shop.TimeZone,
                 member.Shop.CurrencyCode,
@@ -131,7 +133,8 @@ public static class CurrentUser
                 defaultShop.DefaultLocale,
                 defaultShop.TimeZone,
                 defaultShop.CurrencyCode,
-                defaultShop.SetupCompleted);
+                defaultShop.SetupCompleted,
+                IndustryBlueprintCatalog.DeserializeFeatureConfig(defaultShop.FeatureConfig, defaultShop.IndustryBlueprintKey, defaultShop.OperatingMode));
 
             return new UserProfile(
                 user.Id,
@@ -179,7 +182,8 @@ public static class CurrentUser
             activeMembership.DefaultLocale,
             activeMembership.TimeZone,
             activeMembership.CurrencyCode,
-            activeMembership.SetupCompleted);
+            activeMembership.SetupCompleted,
+            IndustryBlueprintCatalog.DeserializeFeatureConfig(activeMembership.FeatureConfig, activeMembership.IndustryBlueprintKey, activeMembership.OperatingMode));
 
         var orgDto = new OrganizationContextDto(
             activeMembership.OrganizationId,

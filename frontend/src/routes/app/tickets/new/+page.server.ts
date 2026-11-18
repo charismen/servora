@@ -36,6 +36,7 @@ export const load: PageServerLoad = async ({ parent, cookies, fetch }) => {
 
 	return {
 		customers: customers.items,
+		allDevices,
 		deviceGroups,
 		staff,
 		locations,
@@ -101,6 +102,10 @@ export const actions: Actions = {
 			const scheduledStartVal = nullable(form.get('scheduledVisitStart'));
 			const scheduledEndVal = nullable(form.get('scheduledVisitEnd'));
 			const slaDueVal = nullable(form.get('slaDueAt'));
+			const additionalAssetIds = form
+				.getAll('additionalAssetIds')
+				.map((val) => Number(val))
+				.filter((id) => Number.isInteger(id) && id > 0 && id !== deviceId);
 
 			const result = await serverApiRequest<{ id: number; ticketNumber: string; publicTrackingToken: string }>(fetch, '/service-tickets', {
 				method: 'POST',
@@ -116,7 +121,7 @@ export const actions: Actions = {
 					photoNotes: nullable(form.get('photoNotes')),
 					securityPasscode: nullable(form.get('securityPasscode')),
 					securityPattern: nullable(form.get('securityPattern')),
-					preRepairChecklist: nullable(form.get('preRepairChecklist')),
+					preRepairChecklist: null,
 					priority: String(form.get('priority') ?? 'Normal'),
 					assignedTechnicianUserId: numberOrNull(form.get('assignedTechnicianUserId')),
 					approvalRequired: form.get('approvalRequired') === 'on',
@@ -129,11 +134,12 @@ export const actions: Actions = {
 					departmentCode: nullable(form.get('departmentCode')),
 					costCenter: nullable(form.get('costCenter')),
 					slaDueAt: slaDueVal ? new Date(slaDueVal).toISOString() : null,
-					serviceLocationType: String(form.get('serviceLocationType') ?? 'InShop'),
+					serviceLocationType: nullable(form.get('serviceLocationType')),
 					siteLocationId: numberOrNull(form.get('siteLocationId')),
 					siteAddressSnapshot: nullable(form.get('siteAddressSnapshot')),
 					scheduledVisitStart: scheduledStartVal ? new Date(scheduledStartVal).toISOString() : null,
 					scheduledVisitEnd: scheduledEndVal ? new Date(scheduledEndVal).toISOString() : null,
+					additionalAssetIds: additionalAssetIds.length > 0 ? additionalAssetIds : null,
 					customFields: ticketCustomFields,
 					inspections
 				}

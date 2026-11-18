@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createTranslator, formatCurrency, formatDate } from '$lib/i18n';
+	import { createTranslator, formatCurrency, formatDate, resolveFeatureConfig, resolveTerminology } from '$lib/i18n';
 	import { apiAssetUrl } from '$lib/media';
 	import PatternLock from '$lib/components/PatternLock.svelte';
 	import type { Locale } from '$lib/i18n';
@@ -20,14 +20,33 @@
 	} = $props();
 
 	const t = $derived(createTranslator(locale));
+	const terms = $derived(resolveTerminology(receipt.terminology, locale));
+	const features = $derived(
+		resolveFeatureConfig(
+			receipt.featureConfig,
+			receipt.isInternalWorkOrder ? 'InternalMaintenance' : undefined
+		)
+	);
 	const qrUrl = $derived(`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(publicTrackingUrl)}`);
 	const logoUrl = $derived(apiAssetUrl(receipt.logoUrl));
 	const currencyCode = $derived(receipt.currencyCode || 'IDR');
 	const workItems = $derived(receipt.workItems ?? []);
 	const consumedParts = $derived(receipt.consumedParts ?? []);
+	const printCustomFields = $derived((receipt.printCustomFields ?? []).filter((f) => f.value !== null && f.value !== ''));
+	const printInspections = $derived((receipt.printInspections ?? []).filter((i) => i.status !== 'Unchecked'));
 	const rawSubtotal = $derived((receipt.workItemsSubtotal ?? 0) + (receipt.consumedPartsSubtotal ?? 0));
+	const canShowSecurity = $derived(
+		Boolean(receipt.securityPasscode || receipt.securityPattern) &&
+			(receipt.featureConfig ? features.showSecurityCredentials && features.securityCredentialMode !== 'None' : true)
+	);
+	const canShowPattern = $derived(
+		Boolean(receipt.securityPattern) &&
+			(!receipt.featureConfig || features.securityCredentialMode === 'PasscodeAndPattern')
+	);
 	const hasFinancialSummary = $derived(
 		receipt.showPaymentSummary &&
+			!receipt.isInternalWorkOrder &&
+			features.showBillingAndPayments &&
 			(workItems.length > 0 ||
 				consumedParts.length > 0 ||
 				receipt.totalAmount != null ||
@@ -35,6 +54,19 @@
 				(receipt.discountAmount ?? 0) > 0 ||
 				receipt.paymentStatus === 'Waived')
 	);
+
+	function locationLabel(locationType: string | null | undefined) {
+		if (locationType === 'OnSite') return t('fieldService.onSite');
+		if (locationType === 'PickupDelivery') return t('fieldService.pickupDelivery');
+		return t('fieldService.inShop');
+	}
+
+	function inspectionStatusLabel(status: string) {
+		if (status === 'Pass') return t('tickets.inspection.pass');
+		if (status === 'Issue') return t('tickets.inspection.fail');
+		if (status === 'NotApplicable') return t('tickets.inspection.na');
+		return t('tickets.inspection.untested');
+	}
 
 	function localizedPaymentStatus(status: string) {
 		const key = `tickets.paymentStatus.${status}`;
@@ -71,31 +103,53 @@
 
 		<!-- Ticket & Date -->
 		<div class="text-center py-2.5 border-b border-dashed border-stone space-y-0.5">
-			<span class="text-[10px] font-label-caps uppercase tracking-widest text-secondary font-bold">{t('receipt.serviceReceipt')}</span>
+			<span class="text-[10px] font-label-caps uppercase tracking-widest text-secondary font-bold">
+				{receipt.isInternalWorkOrder ? t('receipt.workOrder') : t('receipt.serviceReceipt')}
+			</span>
 			<div class="font-mono text-[18px] font-bold tracking-wider text-primary">{receipt.ticketNumber}</div>
 			<div class="text-[11px] text-secondary">{formatDate(receipt.createdAt, locale, { dateStyle: 'medium', timeStyle: 'short' })}</div>
+			{#if receipt.isInternalWorkOrder}
+				<div class="text-[10px] font-medium text-secondary">{t('receipt.internalNoPayment')}</div>
+			{/if}
 		</div>
 
 		<!-- Customer & Device Metadata -->
 		<div class="py-2.5 border-b border-dashed border-stone space-y-1.5 text-[11px]">
-			<div class="flex justify-between items-baseline">
-				<span class="text-secondary font-medium">{t('receipt.customer')}:</span>
+			<div class="flex justify-between items-baseline gap-2">
+				<span class="text-secondary font-medium">{terms.requesterSingular}:</span>
 				<span class="font-semibold text-primary text-right">{receipt.customerName}</span>
 			</div>
 			{#if receipt.customerPhone}
-				<div class="flex justify-between items-baseline font-mono text-secondary">
-					<span>Phone:</span>
+				<div class="flex justify-between items-baseline gap-2 font-mono text-secondary">
+					<span>{t('receipt.phoneLabel')}:</span>
 					<span>{receipt.customerPhone}</span>
 				</div>
 			{/if}
-			<div class="flex justify-between items-baseline pt-1">
-				<span class="text-secondary font-medium">{t('receipt.device')}:</span>
+			<div class="flex justify-between items-baseline gap-2 pt-1">
+				<span class="text-secondary font-medium">{terms.assetSingular}:</span>
 				<span class="font-semibold text-primary text-right">{receipt.device}</span>
 			</div>
-			<div class="flex justify-between items-baseline text-secondary">
-				<span>Status:</span>
+			<div class="flex justify-between items-baseline gap-2 text-secondary">
+				<span>{t('receipt.statusLabel')}:</span>
 				<span>{receipt.status} ({receipt.priority})</span>
 			</div>
+			{#if receipt.serviceLocationType && receipt.serviceLocationType !== 'InShop'}
+				<div class="flex justify-between items-baseline gap-2 text-secondary">
+					<span>{t('fieldService.locationType')}:</span>
+					<span class="text-right font-medium text-primary">{locationLabel(receipt.serviceLocationType)}</span>
+				</div>
+			{/if}
+			{#if receipt.siteAddressSnapshot}
+				<div class="text-[10px] text-secondary">
+					<span class="font-medium">{t('receipt.siteLocation')}:</span> {receipt.siteAddressSnapshot}
+				</div>
+			{/if}
+			{#if receipt.scheduledVisitStart}
+				<div class="flex justify-between items-baseline gap-2 text-secondary">
+					<span>{t('receipt.scheduledVisit')}:</span>
+					<span>{formatDate(receipt.scheduledVisitStart, locale, { dateStyle: 'short', timeStyle: 'short' })}</span>
+				</div>
+			{/if}
 		</div>
 
 		<!-- Problem & Diagnostic Details -->
@@ -133,15 +187,39 @@
 				</div>
 			{/if}
 
-			{#if receipt.securityPasscode || receipt.securityPattern}
+			{#if printCustomFields.length > 0}
+				<div class="space-y-1">
+					<span class="font-bold text-secondary uppercase text-[10px] tracking-wider block">{t('fieldService.customFieldsSection')}</span>
+					{#each printCustomFields as field}
+						<div class="flex justify-between gap-2 text-[11px]">
+							<span class="text-secondary">{locale === 'id' ? field.labelId || field.labelEn : field.labelEn || field.labelId}:</span>
+							<span class="font-medium text-primary text-right">{field.value}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			{#if features.showPreRepairChecklist && printInspections.length > 0}
+				<div class="space-y-1">
+					<span class="font-bold text-secondary uppercase text-[10px] tracking-wider block">{t('receipt.inspectionChecklist')}</span>
+					{#each printInspections as check}
+						<div class="flex justify-between gap-2 text-[10px]">
+							<span class="text-primary">{check.label}{check.notes ? ` (${check.notes})` : ''}</span>
+							<span class="font-semibold shrink-0">{inspectionStatusLabel(check.status)}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			{#if canShowSecurity}
 				<div class="rounded border border-stone bg-ash/40 p-2 space-y-1">
 					<span class="font-bold text-secondary uppercase text-[10px] tracking-wider block">{t('tickets.security.title')}</span>
 					{#if receipt.securityPasscode}
-						<p class="font-mono">Pass: <strong class="font-bold text-primary">{receipt.securityPasscode}</strong></p>
+						<p class="font-mono">{t('receipt.passcodeLabel')}: <strong class="font-bold text-primary">{receipt.securityPasscode}</strong></p>
 					{/if}
-					{#if receipt.securityPattern}
+					{#if canShowPattern}
 						<div class="flex items-center gap-2 pt-1">
-							<PatternLock value={receipt.securityPattern} readonly={true} size={70} />
+							<PatternLock value={receipt.securityPattern!} readonly={true} size={70} />
 							<span class="font-mono text-[10px] text-secondary">{receipt.securityPattern}</span>
 						</div>
 					{/if}
@@ -229,10 +307,10 @@
 		{/if}
 
 		<!-- QR Code Tracking -->
-		{#if receipt.showQrCode}
+		{#if receipt.showQrCode && !receipt.isInternalWorkOrder}
 			<div class="py-3 text-center border-b border-dashed border-stone space-y-1">
 				<img class="receipt-qr mx-auto h-[120px] w-[120px]" src={qrUrl} alt={t('receipt.qrAlt')} />
-				<span class="text-[10px] text-secondary font-medium block">Scan to track repair status</span>
+				<span class="text-[10px] text-secondary font-medium block">{t('receipt.scanToTrack')}</span>
 				<span class="text-[9px] text-secondary font-mono break-all block">{publicTrackingUrl}</span>
 			</div>
 		{/if}
@@ -270,28 +348,50 @@
 				</div>
 			</div>
 			<div class="text-left sm:text-right shrink-0 pt-2 sm:pt-0">
-				<span class="text-[11px] font-label-caps uppercase tracking-widest text-secondary font-bold block">{t('receipt.serviceReceipt')}</span>
+				<span class="text-[11px] font-label-caps uppercase tracking-widest text-secondary font-bold block">
+					{receipt.isInternalWorkOrder ? t('receipt.workOrder') : t('receipt.serviceReceipt')}
+				</span>
 				<div class="font-mono text-[22px] font-bold text-primary mt-0.5 tracking-wider">{receipt.ticketNumber}</div>
 				<div class="text-caption text-secondary font-mono mt-0.5">{formatDate(receipt.createdAt, locale, { dateStyle: 'medium', timeStyle: 'short' })}</div>
+				{#if receipt.isInternalWorkOrder}
+					<div class="mt-1 inline-block rounded-full border border-stone bg-ash px-2.5 py-0.5 text-[10px] font-semibold text-secondary">
+						{t('receipt.internalNoPayment')}
+					</div>
+				{/if}
 			</div>
 		</div>
 
 		<!-- Customer & Device Metadata Grid -->
 		<div class="receipt-meta grid grid-cols-1 sm:grid-cols-2 gap-6 py-5 border-b border-stone">
 			<div class="rounded-lg border border-stone/60 bg-ash/30 p-3 space-y-1">
-				<span class="text-[10px] font-label-caps uppercase tracking-wider text-secondary font-bold block">{t('receipt.customer')}</span>
+				<span class="text-[10px] font-label-caps uppercase tracking-wider text-secondary font-bold block">{terms.requesterSingular}</span>
 				<p class="font-semibold text-primary text-body">{receipt.customerName}</p>
-				<p class="text-caption font-mono text-secondary">{receipt.customerPhone}</p>
+				{#if receipt.customerPhone}
+					<p class="text-caption font-mono text-secondary">{receipt.customerPhone}</p>
+				{/if}
+				{#if receipt.siteAddressSnapshot}
+					<p class="text-caption text-secondary pt-1">{t('receipt.siteLocation')}: {receipt.siteAddressSnapshot}</p>
+				{/if}
 			</div>
 			<div class="rounded-lg border border-stone/60 bg-ash/30 p-3 space-y-1">
-				<span class="text-[10px] font-label-caps uppercase tracking-wider text-secondary font-bold block">{t('receipt.device')}</span>
+				<span class="text-[10px] font-label-caps uppercase tracking-wider text-secondary font-bold block">{terms.assetSingular}</span>
 				<p class="font-semibold text-primary text-body">{receipt.device}</p>
-				<p class="text-caption text-secondary font-medium">Status: <span class="text-primary font-semibold">{receipt.status}</span> · Priority: <span class="text-primary font-semibold">{receipt.priority}</span></p>
+				<p class="text-caption text-secondary font-medium">
+					{t('receipt.statusLabel')}: <span class="text-primary font-semibold">{receipt.status}</span> · {t('tickets.detail.priority')}: <span class="text-primary font-semibold">{receipt.priority}</span>
+				</p>
+				{#if receipt.serviceLocationType && receipt.serviceLocationType !== 'InShop'}
+					<p class="text-caption text-secondary">
+						{t('fieldService.locationType')}: <span class="font-semibold text-primary">{locationLabel(receipt.serviceLocationType)}</span>
+						{#if receipt.scheduledVisitStart}
+							· {formatDate(receipt.scheduledVisitStart, locale, { dateStyle: 'medium', timeStyle: 'short' })}
+						{/if}
+					</p>
+				{/if}
 			</div>
 		</div>
 
 		<!-- Body & QR Code -->
-		<div class="receipt-body grid grid-cols-1 md:grid-cols-[1fr_210px] gap-8 py-6">
+		<div class="receipt-body grid grid-cols-1 {receipt.showQrCode && !receipt.isInternalWorkOrder ? 'md:grid-cols-[1fr_210px]' : ''} gap-8 py-6">
 			<div class="space-y-4">
 				<div>
 					<span class="text-[11px] font-label-caps uppercase tracking-wider text-secondary font-bold block">{t('tickets.detail.complaint')}</span>
@@ -326,7 +426,35 @@
 					</div>
 				{/if}
 
-				{#if receipt.securityPasscode || receipt.securityPattern}
+				{#if printCustomFields.length > 0}
+					<div class="border border-stone/70 rounded-xl p-3.5 bg-ash/20">
+						<span class="text-[10px] font-label-caps uppercase tracking-wider text-secondary font-bold block mb-2">{t('fieldService.customFieldsSection')}</span>
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-caption">
+							{#each printCustomFields as field}
+								<div>
+									<span class="text-secondary">{locale === 'id' ? field.labelId || field.labelEn : field.labelEn || field.labelId}:</span>
+									<span class="font-semibold text-primary ml-1">{field.value}</span>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
+				{#if features.showPreRepairChecklist && printInspections.length > 0}
+					<div class="border border-stone/70 rounded-xl p-3.5 bg-ash/20">
+						<span class="text-[10px] font-label-caps uppercase tracking-wider text-secondary font-bold block mb-2">{t('receipt.inspectionChecklist')}</span>
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-caption">
+							{#each printInspections as check}
+								<div class="flex items-center justify-between gap-2 rounded border border-stone/40 bg-white px-2.5 py-1">
+									<span class="text-primary">{check.label}{check.notes ? ` — ${check.notes}` : ''}</span>
+									<span class="font-semibold text-xs shrink-0">{inspectionStatusLabel(check.status)}</span>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
+				{#if canShowSecurity}
 					<div class="border border-stone rounded-xl p-3.5 bg-ash/30 space-y-2">
 						<span class="text-[10px] font-label-caps uppercase tracking-wider text-secondary font-bold block">{t('tickets.security.title')}</span>
 						<div class="flex flex-wrap items-center gap-6">
@@ -336,9 +464,9 @@
 									<span class="font-mono font-bold text-body text-primary">{receipt.securityPasscode}</span>
 								</div>
 							{/if}
-							{#if receipt.securityPattern}
+							{#if canShowPattern}
 								<div class="flex items-center gap-3">
-									<PatternLock value={receipt.securityPattern} readonly={true} size={84} />
+									<PatternLock value={receipt.securityPattern!} readonly={true} size={84} />
 									<div class="text-caption text-secondary">
 										<span class="font-medium text-primary block">{t('tickets.security.pattern')}</span>
 										<span class="font-mono text-[11px]">{receipt.securityPattern}</span>
@@ -448,11 +576,11 @@
 			</div>
 
 			<!-- QR Code Block -->
-			{#if receipt.showQrCode}
+			{#if receipt.showQrCode && !receipt.isInternalWorkOrder}
 				<div class="border border-stone rounded-xl p-4 text-center bg-ash/30 flex flex-col items-center justify-between h-fit self-start space-y-2">
 					<div>
 						<img class="receipt-qr mx-auto h-[160px] w-[160px] rounded bg-white p-1 border border-stone/40" src={qrUrl} alt={t('receipt.qrAlt')} />
-						<span class="text-caption font-semibold text-primary block mt-2">Scan for Live Status</span>
+						<span class="text-caption font-semibold text-primary block mt-2">{t('receipt.scanForLiveStatus')}</span>
 					</div>
 					<p class="text-[10px] font-mono text-secondary break-all">{publicTrackingUrl}</p>
 				</div>

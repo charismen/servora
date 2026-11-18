@@ -3313,6 +3313,10 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasColumnType("varchar(12)")
                         .HasColumnName("default_locale");
 
+                    b.Property<string>("FeatureConfig")
+                        .HasColumnType("text")
+                        .HasColumnName("feature_config");
+
                     b.Property<string>("IndustryBlueprintKey")
                         .IsRequired()
                         .ValueGeneratedOnAdd()

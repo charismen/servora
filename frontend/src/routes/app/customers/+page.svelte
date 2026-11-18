@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { createTranslator, formatDate } from '$lib/i18n';
+	import { createTranslator, formatDate, resolveTerminology } from '$lib/i18n';
 	import type { PageData } from './$types';
 	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import Dropdown from '$lib/components/ui/dropdown/Dropdown.svelte';
@@ -10,6 +10,7 @@
 
 	let { data }: { data: PageData } = $props();
 	const t = $derived(createTranslator(data.locale));
+	const terms = $derived(resolveTerminology(data.user?.workspace?.terminology, data.locale));
 	let customers = $derived(data.customers);
 	const pageSizeOptions = [10, 20, 50, 100];
 
@@ -110,9 +111,9 @@
 	<PageHeader
 		items={[
 			{ label: t('common.console'), href: '/app' },
-			{ label: t('nav.customers') }
+			{ label: terms.requesterPlural }
 		]}
-		title={t('nav.customers')}
+		title={terms.requesterPlural}
 		subtitle={t('customers.list.subtitle')}
 	>
 		{#snippet actions()}
@@ -121,7 +122,7 @@
 				class="inline-flex h-9 items-center gap-1.5 rounded-button bg-ink px-3.5 text-body-sm font-medium text-white shadow-xs hover:bg-ink/90 active:scale-95 transition-all cursor-pointer shrink-0"
 			>
 				<span class="material-symbols-outlined text-[18px]">person_add</span>
-				<span>{t('customers.list.newCustomer')}</span>
+				<span>+ {terms.requesterSingular}</span>
 			</a>
 		{/snippet}
 	</PageHeader>
@@ -253,7 +254,7 @@
 				<table class="w-full text-left border-collapse">
 					<thead>
 						<tr class="border-b border-stone bg-surface-container-low text-[11px] font-bold uppercase tracking-wider text-secondary">
-							<th class="px-md py-3.5 font-label-caps">{t('customers.list.customerName')}</th>
+							<th class="px-md py-3.5 font-label-caps">{terms.requesterSingular}</th>
 							<th class="px-md py-3.5 font-label-caps">{t('customers.list.phoneNumber')}</th>
 							<th class="px-md py-3.5 font-label-caps hidden md:table-cell">{t('customers.list.emailAddress')}</th>
 							<th class="px-md py-3.5 font-label-caps hidden lg:table-cell">{t('customers.list.totalTickets')}</th>

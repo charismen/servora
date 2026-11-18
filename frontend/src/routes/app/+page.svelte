@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fade } from 'svelte/transition';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { createTranslator, formatDate } from '$lib/i18n';
+	import { createTranslator, formatDate, resolveFeatureConfig, resolveTerminology } from '$lib/i18n';
 	import { activityEntityHref } from '$lib/types/activity';
 	import type { PageData } from './$types';
 	import GlowingBadge from '$lib/components/ui/glowing-badge/GlowingBadge.svelte';
@@ -11,6 +11,13 @@
 	let isLoading = $state(false);
 
 	const t = $derived(createTranslator(data.locale));
+	const terms = $derived(resolveTerminology(data.user?.workspace?.terminology, data.locale));
+	const features = $derived(
+		resolveFeatureConfig(
+			data.user?.workspace?.featureConfig ?? data.blueprintConfig?.featureConfig,
+			data.user?.workspace?.operatingMode
+		)
+	);
 
 	function formatActionType(actionType: string) {
 		const key = 'activity.action.' + actionType;
@@ -172,7 +179,12 @@
 	const activeTickets = $derived(tickets.filter((ticket) => !closedStatusNames.has(ticket.status)));
 	const attentionTickets = $derived(
 		activeTickets
-			.filter((ticket) => ['High', 'Urgent'].includes(ticket.priority) || ['Unpaid', 'Partial'].includes(ticket.paymentStatus) || ageDays(ticket.createdAt) > 3)
+			.filter(
+				(ticket) =>
+					['High', 'Urgent'].includes(ticket.priority) ||
+					(features.showBillingAndPayments && !ticket.isInternalWorkOrder && ['Unpaid', 'Partial'].includes(ticket.paymentStatus)) ||
+					ageDays(ticket.createdAt) > 3
+			)
 			.slice(0, 6)
 	);
 
@@ -300,14 +312,18 @@
 			tone: summary.waitingApproval > 0 ? 'text-amber-800' : 'text-primary',
 			href: '/app/kanban'
 		},
-		{
-			id: 'unpaid',
-			label: t('dashboard.unpaidTickets'),
-			value: summary.unpaidTickets,
-			icon: 'payments',
-			tone: summary.unpaidTickets > 0 ? 'text-warning' : 'text-primary',
-			href: '/app/tickets'
-		},
+		...(features.showBillingAndPayments
+			? [
+					{
+						id: 'unpaid',
+						label: t('dashboard.unpaidTickets'),
+						value: summary.unpaidTickets,
+						icon: 'payments',
+						tone: summary.unpaidTickets > 0 ? 'text-warning' : 'text-primary',
+						href: '/app/tickets'
+					}
+				]
+			: []),
 		{
 			id: 'blocked',
 			label: t('dashboard.blocked'),
@@ -513,8 +529,8 @@
 					<table class="w-full min-w-[640px] border-collapse text-left">
 						<thead class="bg-ash">
 							<tr>
-								<th class="px-card-padding py-3 font-label-caps text-label-caps text-secondary uppercase tracking-wider">{t('dashboard.ticketId')} / {t('dashboard.device')}</th>
-								<th class="px-card-padding py-3 font-label-caps text-label-caps text-secondary uppercase tracking-wider">{t('dashboard.customer')}</th>
+								<th class="px-card-padding py-3 font-label-caps text-label-caps text-secondary uppercase tracking-wider">{t('dashboard.ticketId')} / {terms.assetSingular}</th>
+								<th class="px-card-padding py-3 font-label-caps text-label-caps text-secondary uppercase tracking-wider">{terms.requesterSingular}</th>
 								<th class="px-card-padding py-3 font-label-caps text-label-caps text-secondary uppercase tracking-wider">{t('dashboard.status')}</th>
 								<th class="px-card-padding py-3 font-label-caps text-label-caps text-secondary uppercase tracking-wider hidden sm:table-cell">{t('kanban.technician')}</th>
 								<th class="px-card-padding py-3 text-right font-label-caps text-label-caps text-secondary uppercase tracking-wider">{t('dashboard.age')}</th>
@@ -541,7 +557,7 @@
 										<div class="flex flex-wrap items-center gap-1.5">
 											<GlowingBadge status={ticket.status}>{ticket.status}</GlowingBadge>
 											<span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider {ticket.priority === 'Urgent' ? 'bg-red-500/10 text-red-700 border border-red-200' : ticket.priority === 'High' ? 'bg-amber-500/10 text-amber-800 border border-amber-200' : 'bg-ash text-secondary border border-stone'}">{t(`tickets.priority.${ticket.priority}`)}</span>
-											{#if ticket.paymentStatus === 'Unpaid' || ticket.paymentStatus === 'Partial'}
+											{#if features.showBillingAndPayments && !ticket.isInternalWorkOrder && (ticket.paymentStatus === 'Unpaid' || ticket.paymentStatus === 'Partial')}
 												<GlowingBadge status={ticket.paymentStatus}>{ticket.paymentStatus}</GlowingBadge>
 											{/if}
 										</div>

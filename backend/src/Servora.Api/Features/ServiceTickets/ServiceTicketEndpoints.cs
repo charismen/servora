@@ -242,7 +242,9 @@ public static class ServiceTicketEndpoints
         DateTimeOffset? ScheduledVisitStart = null,
         bool IsInternalWorkOrder = false,
         IReadOnlyCollection<BlueprintEndpoints.FieldValueDto>? PrintCustomFields = null,
-        TerminologyConfigDto? Terminology = null);
+        TerminologyConfigDto? Terminology = null,
+        WorkspaceFeatureConfig? FeatureConfig = null,
+        IReadOnlyCollection<BlueprintEndpoints.TicketInspectionDto>? PrintInspections = null);
 
     public sealed record CreateTicketRequest(
         int CustomerId,
@@ -268,7 +270,7 @@ public static class ServiceTicketEndpoints
         string? DepartmentCode = null,
         string? CostCenter = null,
         DateTimeOffset? SlaDueAt = null,
-        ServiceLocationType ServiceLocationType = ServiceLocationType.InShop,
+        ServiceLocationType? ServiceLocationType = null,
         int? SiteLocationId = null,
         string? SiteAddressSnapshot = null,
         DateTimeOffset? ScheduledVisitStart = null,
@@ -313,7 +315,11 @@ public static class ServiceTicketEndpoints
         int? SiteLocationId = null,
         string? SiteAddressSnapshot = null,
         DateTimeOffset? ScheduledVisitStart = null,
-        DateTimeOffset? ScheduledVisitEnd = null);
+        DateTimeOffset? ScheduledVisitEnd = null,
+        bool ClearSlaDueAt = false,
+        bool ClearSiteLocationId = false,
+        bool ClearFieldServiceSchedule = false);
+    public sealed record AddTicketAssetRequest(int AssetId, string? Notes = null);
     public sealed record UpsertAccessoryRequest(string Name, decimal Quantity, string? Notes);
     public sealed record ChangeStatusRequest(int StatusId, string? Reason, bool OverridePaymentBlock);
     public sealed record AssignTicketRequest(int? TechnicianUserId);
@@ -432,6 +438,16 @@ public static class ServiceTicketEndpoints
 
         app.MapDelete("/service-tickets/{id:int}/accessories/{accessoryId:int}", DeleteAccessoryAsync)
             .WithName("DeleteServiceTicketAccessory")
+            .WithOpenApi()
+            .RequireAuthorization(ApplicationPermissions.ServiceTicketsWrite);
+
+        app.MapPost("/service-tickets/{id:int}/assets", AddTicketAssetAsync)
+            .WithName("AddServiceTicketAsset")
+            .WithOpenApi()
+            .RequireAuthorization(ApplicationPermissions.ServiceTicketsWrite);
+
+        app.MapDelete("/service-tickets/{id:int}/assets/{assetId:int}", DeleteTicketAssetAsync)
+            .WithName("DeleteServiceTicketAsset")
             .WithOpenApi()
             .RequireAuthorization(ApplicationPermissions.ServiceTicketsWrite);
 
@@ -702,8 +718,13 @@ public static class ServiceTicketEndpoints
         if (initialStatus is null) return Results.BadRequest("Initial service status is not configured.");
 
         var workspace = await shopContext.GetCurrentWorkspaceAsync(cancellationToken);
+        var workspaceFeatureConfig = IndustryBlueprintCatalog.DeserializeFeatureConfig(
+            workspace.FeatureConfig,
+            workspace.IndustryBlueprintKey,
+            workspace.OperatingMode);
         var isInternalWorkOrder = request.IsInternalWorkOrder
             ?? (workspace.OperatingMode == OperatingMode.InternalMaintenance);
+        var resolvedServiceLocationType = request.ServiceLocationType ?? workspaceFeatureConfig.DefaultServiceLocationType;
 
         string? siteAddressSnapshot = TrimOrNull(request.SiteAddressSnapshot);
         if (request.SiteLocationId.HasValue && string.IsNullOrWhiteSpace(siteAddressSnapshot))
@@ -738,7 +759,7 @@ public static class ServiceTicketEndpoints
             DepartmentCode = TrimOrNull(request.DepartmentCode) ?? customer.DepartmentCode,
             CostCenter = TrimOrNull(request.CostCenter) ?? customer.CostCenter,
             SlaDueAt = request.SlaDueAt,
-            ServiceLocationType = request.ServiceLocationType,
+            ServiceLocationType = resolvedServiceLocationType,
             SiteLocationId = request.SiteLocationId ?? device.SiteLocationId,
             SiteAddressSnapshot = siteAddressSnapshot ?? customer.Address,
             ScheduledVisitStart = request.ScheduledVisitStart,
@@ -1305,6 +1326,10 @@ public static class ServiceTicketEndpoints
             .ToList();
 
         var workspace = await shopContext.GetCurrentWorkspaceAsync(cancellationToken);
+        var featureConfig = IndustryBlueprintCatalog.DeserializeFeatureConfig(
+            workspace.FeatureConfig,
+            workspace.IndustryBlueprintKey,
+            workspace.OperatingMode);
         var printAssetFields = await context.AssetFieldValues
             .AsNoTracking()
             .Where(v => v.ShopId == shopId && v.ServiceAssetId == ticket.DeviceId && v.FieldDefinition.ShowOnPrint && v.Value != null)
@@ -1322,6 +1347,14 @@ public static class ServiceTicketEndpoints
                 v.FieldDefinition.FieldType.ToString(), v.Value, true, v.FieldDefinition.ShowOnPublicTracking))
             .ToListAsync(cancellationToken);
         var printFields = printAssetFields.Concat(printTicketFields).ToList();
+        var printInspections = featureConfig.ShowPreRepairChecklist
+            ? await context.TicketInspectionResults
+                .AsNoTracking()
+                .Where(r => r.ShopId == shopId && r.ServiceTicketId == ticket.Id)
+                .OrderBy(r => r.Id)
+                .Select(r => new BlueprintEndpoints.TicketInspectionDto(r.Id, r.ChecklistTemplateId, r.Label, r.Status.ToString(), r.Notes))
+                .ToListAsync(cancellationToken)
+            : [];
 
         return Results.Ok(new TicketReceiptDto(
             ticket.Id,
@@ -1347,12 +1380,12 @@ public static class ServiceTicketEndpoints
             settings.Address,
             settings.ReceiptFooter,
             printSettings.TermsAndConditions,
-            printSettings.ShowPhysicalCondition,
-            printSettings.ShowAccessories,
+            printSettings.ShowPhysicalCondition && featureConfig.ShowPhysicalConditionNotes,
+            printSettings.ShowAccessories && featureConfig.ShowAccessories,
             printSettings.ShowPhotoNotes,
-            printSettings.ShowQrCode,
+            printSettings.ShowQrCode && !ticket.IsInternalWorkOrder,
             printSettings.ShowPhoneNumber,
-            printSettings.ShowPaymentSummary && !ticket.IsInternalWorkOrder,
+            printSettings.ShowPaymentSummary && !ticket.IsInternalWorkOrder && featureConfig.ShowBillingAndPayments,
             billing.PaymentStatus.ToString(),
             settings.CurrencyCode,
             billing.WorkItemsSubtotal,
@@ -1369,7 +1402,9 @@ public static class ServiceTicketEndpoints
             ticket.ScheduledVisitStart,
             ticket.IsInternalWorkOrder,
             printFields,
-            IndustryBlueprintCatalog.DeserializeTerminology(workspace.TerminologyConfig, workspace.IndustryBlueprintKey)));
+            IndustryBlueprintCatalog.DeserializeTerminology(workspace.TerminologyConfig, workspace.IndustryBlueprintKey),
+            featureConfig,
+            printInspections));
     }
 
     private static async Task<IResult> LogReceiptPrintAsync(
@@ -1432,6 +1467,66 @@ public static class ServiceTicketEndpoints
         context.ServiceTicketAccessories.Remove(accessory);
         await context.SaveChangesAsync(cancellationToken);
         await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Accessory removed: {accessory.Name}", cancellationToken: cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> AddTicketAssetAsync(
+        int id,
+        [FromBody] AddTicketAssetRequest request,
+        AppDbContext context,
+        IShopContext shopContext,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken)
+    {
+        var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
+        var ticket = await context.ServiceTickets
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
+        if (ticket is null) return Results.NotFound();
+        if (request.AssetId == ticket.DeviceId)
+        {
+            return Validation(("assetId", "Asset is already the primary asset on this ticket."));
+        }
+
+        var asset = await context.Devices
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == request.AssetId && d.ShopId == shopId && d.DeletedAt == null, cancellationToken);
+        if (asset is null) return Results.NotFound("Service asset was not found.");
+
+        var alreadyLinked = await context.ServiceTicketAssets
+            .AnyAsync(x => x.ShopId == shopId && x.ServiceTicketId == id && x.ServiceAssetId == request.AssetId, cancellationToken);
+        if (alreadyLinked) return Results.NoContent();
+
+        context.ServiceTicketAssets.Add(new ServiceTicketAsset
+        {
+            ShopId = shopId,
+            ServiceTicketId = id,
+            ServiceAssetId = request.AssetId,
+            Notes = TrimOrNull(request.Notes)
+        });
+        await context.SaveChangesAsync(cancellationToken);
+        await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Linked asset: {asset.Brand} {asset.Model}".Trim(), cancellationToken: cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> DeleteTicketAssetAsync(
+        int id,
+        int assetId,
+        AppDbContext context,
+        IShopContext shopContext,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken)
+    {
+        var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
+        var link = await context.ServiceTicketAssets
+            .Include(x => x.ServiceAsset)
+            .FirstOrDefaultAsync(x => x.ShopId == shopId && x.ServiceTicketId == id && x.ServiceAssetId == assetId, cancellationToken);
+        if (link is null) return Results.NotFound();
+
+        var assetLabel = $"{link.ServiceAsset.Brand} {link.ServiceAsset.Model}".Trim();
+        context.ServiceTicketAssets.Remove(link);
+        await context.SaveChangesAsync(cancellationToken);
+        await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Unlinked asset: {assetLabel}", cancellationToken: cancellationToken);
         return Results.NoContent();
     }
 
@@ -1615,12 +1710,40 @@ public static class ServiceTicketEndpoints
         if (request.IsInternalWorkOrder.HasValue) ticket.IsInternalWorkOrder = request.IsInternalWorkOrder.Value;
         if (request.DepartmentCode is not null) ticket.DepartmentCode = TrimOrNull(request.DepartmentCode);
         if (request.CostCenter is not null) ticket.CostCenter = TrimOrNull(request.CostCenter);
-        if (request.SlaDueAt.HasValue) ticket.SlaDueAt = request.SlaDueAt;
+        if (request.ClearSlaDueAt) ticket.SlaDueAt = null;
+        else if (request.SlaDueAt.HasValue) ticket.SlaDueAt = request.SlaDueAt;
+
         if (request.ServiceLocationType.HasValue) ticket.ServiceLocationType = request.ServiceLocationType.Value;
-        if (request.SiteLocationId.HasValue) ticket.SiteLocationId = request.SiteLocationId;
+
+        if (request.ClearSiteLocationId)
+        {
+            ticket.SiteLocationId = null;
+        }
+        else if (request.SiteLocationId.HasValue)
+        {
+            ticket.SiteLocationId = request.SiteLocationId;
+            if (request.SiteAddressSnapshot is null)
+            {
+                ticket.SiteAddressSnapshot = await context.CustomerLocations
+                    .AsNoTracking()
+                    .Where(loc => loc.Id == request.SiteLocationId.Value && loc.ShopId == shopId)
+                    .Select(loc => loc.Address)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+        }
+
         if (request.SiteAddressSnapshot is not null) ticket.SiteAddressSnapshot = TrimOrNull(request.SiteAddressSnapshot);
-        if (request.ScheduledVisitStart.HasValue) ticket.ScheduledVisitStart = request.ScheduledVisitStart;
-        if (request.ScheduledVisitEnd.HasValue) ticket.ScheduledVisitEnd = request.ScheduledVisitEnd;
+
+        if (request.ClearFieldServiceSchedule)
+        {
+            ticket.ScheduledVisitStart = null;
+            ticket.ScheduledVisitEnd = null;
+        }
+        else
+        {
+            if (request.ScheduledVisitStart.HasValue) ticket.ScheduledVisitStart = request.ScheduledVisitStart;
+            if (request.ScheduledVisitEnd.HasValue) ticket.ScheduledVisitEnd = request.ScheduledVisitEnd;
+        }
         if (request.CreatedAt.HasValue)
         {
             ticket.CreatedAt = request.CreatedAt.Value;

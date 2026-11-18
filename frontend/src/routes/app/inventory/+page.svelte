@@ -17,11 +17,25 @@
 	const canManageItems = $derived(canWrite && canSeeCost);
 	const canDeleteInventory = $derived(can(data.user.permissions, permissions.inventoryDelete));
 	const currencyCode = $derived(data.shopProfile?.currencyCode ?? 'IDR');
-	const currencySymbol = $derived(currencyCode === 'IDR' ? 'Rp' : '$');
+	const currencySymbol = $derived(
+		currencyCode === 'IDR'
+			? 'Rp'
+			: currencyCode === 'MYR'
+				? 'RM'
+				: currencyCode === 'SGD'
+					? 'S$'
+					: currencyCode === 'EUR'
+						? '€'
+						: currencyCode === 'GBP'
+							? '£'
+							: currencyCode === 'AUD'
+								? 'A$'
+								: '$'
+	);
 	const totalValue = $derived(data.items.reduce((sum, item) => sum + item.onHandQuantity * (item.costPrice ?? 0), 0));
 	const lowStockCount = $derived(data.items.filter((item) => item.availableQuantity <= item.reorderLevel).length);
 	const reservedUnits = $derived(data.items.reduce((sum, item) => sum + item.reservedQuantity, 0));
-	const itemTypes = ['SparePart', 'Accessory', 'SecondhandPart', 'SecondhandPcBuild', 'SecondhandLaptop', 'ServiceConsumable'];
+	const itemTypes = ['SparePart', 'Accessory', 'ServiceConsumable', 'Equipment', 'ToolOrSupply', 'RefurbishedUnit', 'SecondhandPart', 'SecondhandPcBuild', 'SecondhandLaptop'];
 	const conditions = ['New', 'Used', 'Refurbished', 'ForParts'];
 	const pageSizeOptions = [10, 20, 50, 100];
 	const currentPage = $derived(data.inventoryPage.page);

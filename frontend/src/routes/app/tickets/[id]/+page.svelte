@@ -1,22 +1,34 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { beforeNavigate, goto } from '$app/navigation';
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Dropdown from '$lib/components/ui/dropdown/Dropdown.svelte';
 	import DeleteConfirmButton from '$lib/components/DeleteConfirmButton.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import type { ActionData, PageData } from './$types';
 	import type { PaymentTransaction, TicketWorkItem, WorkItemType } from '$lib/types/service-tickets';
-	import { createTranslator, formatCurrency, formatDate } from '$lib/i18n';
+	import { createTranslator, formatCurrency, formatDate, resolveFeatureConfig, resolveTerminology } from '$lib/i18n';
 	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import GlowingBadge from '$lib/components/ui/glowing-badge/GlowingBadge.svelte';
 	import PatternLock from '$lib/components/PatternLock.svelte';
 	import CurrencyInput from '$lib/components/CurrencyInput.svelte';
+	import DynamicFieldRenderer from '$lib/components/DynamicFieldRenderer.svelte';
+	import InspectionChecklistRenderer, { type InspectionEntry } from '$lib/components/InspectionChecklistRenderer.svelte';
 	import { compressImage } from '$lib/media';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const t = $derived(createTranslator(data.locale));
+	const terms = $derived(resolveTerminology(data.user?.workspace?.terminology, data.locale));
+	const features = $derived(
+		resolveFeatureConfig(
+			data.user?.workspace?.featureConfig ?? data.blueprintConfig?.featureConfig,
+			data.user?.workspace?.operatingMode
+		)
+	);
+	const detailAssetFields = $derived((data.blueprintConfig?.assetFields ?? []).filter((f) => f.showOnDetail));
+	const detailTicketFields = $derived((data.blueprintConfig?.ticketFields ?? []).filter((f) => f.showOnDetail));
+	const inspectionTemplates = $derived(data.blueprintConfig?.inspectionChecklists ?? []);
 
 	type TicketWorkspaceTab = 'overview' | 'diagnosis' | 'photos' | 'parts' | 'history';
 
@@ -58,6 +70,14 @@
 		return translated === key ? value : translated;
 	}
 
+	function toDateTimeLocal(value: string | null | undefined) {
+		if (!value) return '';
+		const d = new Date(value);
+		if (Number.isNaN(d.getTime())) return '';
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+	}
+
 	function makeDetailDraft(current: PageData['ticket']) {
 		return {
 			complaint: current.complaint,
@@ -73,7 +93,15 @@
 			diagnosis: current.diagnosis ?? '',
 			repairNotes: current.repairNotes ?? '',
 			warrantyUntil: current.warrantyUntil?.slice(0, 10) ?? '',
-			warrantyTerms: current.warrantyTerms ?? ''
+			warrantyTerms: current.warrantyTerms ?? '',
+			serviceLocationType: (current.serviceLocationType ?? 'InShop') as 'InShop' | 'OnSite' | 'PickupDelivery',
+			siteLocationId: current.siteLocationId ? String(current.siteLocationId) : '',
+			siteAddressSnapshot: current.siteAddressSnapshot ?? '',
+			scheduledVisitStart: toDateTimeLocal(current.scheduledVisitStart),
+			scheduledVisitEnd: toDateTimeLocal(current.scheduledVisitEnd),
+			slaDueAt: toDateTimeLocal(current.slaDueAt),
+			departmentCode: current.departmentCode ?? '',
+			costCenter: current.costCenter ?? ''
 		};
 	}
 
@@ -132,13 +160,43 @@
 	const draftKey = (draft: ReturnType<typeof makeDetailDraft>) => JSON.stringify(draft);
 
 	const ticket = $derived(data.ticket);
+	const showBilling = $derived(features.showBillingAndPayments && !ticket.isInternalWorkOrder);
+	const showApprovals = $derived(features.showCustomerApprovals && !ticket.isInternalWorkOrder);
+	const availableLinkAssets = $derived(
+		(data.allAssets ?? []).filter(
+			(a) => a.id !== ticket.deviceId && !(ticket.linkedAssets ?? []).some((l) => l.serviceAssetId === a.id)
+		)
+	);
+	let linkAssetId = $state('');
+	let linkAssetNotes = $state('');
+	let assetFieldValues = $state<Record<number, string>>(
+		untrack(() => Object.fromEntries((data.ticket.assetCustomFields ?? []).map((f) => [f.fieldDefinitionId, f.value ?? ''])))
+	);
+	let ticketFieldValues = $state<Record<number, string>>(
+		untrack(() => Object.fromEntries((data.ticket.customFields ?? []).map((f) => [f.fieldDefinitionId, f.value ?? ''])))
+	);
+	let inspectionEntries = $state<InspectionEntry[]>([]);
 	const imageAttachments = $derived(ticket.attachments.filter(attachment => attachment.mimeType.startsWith('image/')));
 	const activeServiceTemplates = $derived((data.serviceTemplates ?? []).filter(template => template.isActive));
 	const checklistDone = $derived((data.checklistItems ?? []).filter(item => item.isCompleted).length);
 	const whatsapp = $derived(form?.whatsapp);
 	const currencyCode = $derived(data.shopProfile?.currencyCode ?? 'IDR');
 	const allowCurrencyDecimals = $derived(currencyCode !== 'IDR');
-	const currencySymbol = $derived(currencyCode === 'IDR' ? 'Rp' : '$');
+	const currencySymbol = $derived(
+		currencyCode === 'IDR'
+			? 'Rp'
+			: currencyCode === 'MYR'
+				? 'RM'
+				: currencyCode === 'SGD'
+					? 'S$'
+					: currencyCode === 'EUR'
+						? '€'
+						: currencyCode === 'GBP'
+							? '£'
+							: currencyCode === 'AUD'
+								? 'A$'
+								: '$'
+	);
 	const workItems = $derived(data.workItems ?? []);
 	const paymentSummary = $derived(data.payment);
 	const paymentTransactions = $derived(data.payment.transactions ?? []);
@@ -511,6 +569,8 @@
 			const next = makeDetailDraft(data.ticket);
 			detailDraft = next;
 			savedDetailDraft = next;
+			assetFieldValues = Object.fromEntries((data.ticket.assetCustomFields ?? []).map((f) => [f.fieldDefinitionId, f.value ?? '']));
+			ticketFieldValues = Object.fromEntries((data.ticket.customFields ?? []).map((f) => [f.fieldDefinitionId, f.value ?? '']));
 			loadedTicketKey = nextTicketKey;
 			showDiscardConfirm = false;
 		}
@@ -556,6 +616,10 @@
 		}
 		if (formAction === 'pickupOverride') pickupOverrideReason = '';
 		if (formAction === 'inventory') reserveDraft = { inventoryItemId: '', quantity: '', notes: '' };
+		if (formAction === 'linkAsset') {
+			linkAssetId = '';
+			linkAssetNotes = '';
+		}
 	});
 </script>
 
@@ -564,22 +628,28 @@
 	<header class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
 		<div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
 			<div class="min-w-0 space-y-1.5">
-				<Breadcrumbs items={[{ label: t('common.console'), href: '/app' }, { label: t('nav.tickets'), href: '/app/tickets' }, { label: ticket.ticketNumber }]} />
+				<Breadcrumbs items={[{ label: t('common.console'), href: '/app' }, { label: terms.ticketPlural, href: '/app/tickets' }, { label: ticket.ticketNumber }]} />
 				<div class="flex flex-wrap items-center gap-2.5 pt-1">
 					<h1 class="text-headline-sm font-bold text-primary font-mono tracking-tight">{ticket.ticketNumber}</h1>
 					<GlowingBadge status={ticket.status}>{ticket.status}</GlowingBadge>
-					<GlowingBadge status={ticket.paymentStatus}>{labelFor('tickets.paymentStatus', ticket.paymentStatus)}</GlowingBadge>
-					{#if hasPendingApproval}
+					{#if showBilling}
+						<GlowingBadge status={ticket.paymentStatus}>{labelFor('tickets.paymentStatus', ticket.paymentStatus)}</GlowingBadge>
+					{:else if ticket.isInternalWorkOrder}
+						<span class="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-caption font-semibold">
+							{t('workspaces.mode.InternalMaintenance')}
+						</span>
+					{/if}
+					{#if hasPendingApproval && showApprovals}
 						<span class="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-caption font-semibold">
 							{t('tickets.detail.pendingApprovalBadge')}
 						</span>
 					{/if}
-					{#if overpaidAmount > 0}
+					{#if showBilling && overpaidAmount > 0}
 						<span class="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-caption font-semibold font-mono">
 							{t('tickets.detail.refundDueBadge')}: {formatCurrency(overpaidAmount, data.locale, currencyCode)}
 						</span>
 					{/if}
-					{#if ticket.warrantyActive}
+					{#if features.showWarrantySection && ticket.warrantyActive}
 						<span class="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-caption font-semibold uppercase tracking-wide">
 							{t('tickets.detail.warrantyActive')}
 						</span>
@@ -588,7 +658,9 @@
 				<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-secondary pt-0.5">
 					<a href={`/app/customers/${ticket.customerId}`} class="font-semibold text-primary hover:underline inline-flex items-center gap-1">
 						<span>{ticket.customerName}</span>
-						<span class="text-caption text-secondary">({ticket.customerPhone})</span>
+						{#if ticket.customerPhone}
+							<span class="text-caption text-secondary">({ticket.customerPhone})</span>
+						{/if}
 					</a>
 					<span>·</span>
 					<span class="font-medium text-primary">{ticket.device}</span>
@@ -737,92 +809,127 @@
 						</div>
 					</div>
 
-					{#if data.ticket.serviceLocationType !== 'InShop' || data.ticket.isInternalWorkOrder || (data.ticket.customFields?.length ?? 0) > 0 || (data.ticket.assetCustomFields?.length ?? 0) > 0 || (data.ticket.inspections?.length ?? 0) > 0}
+					{#if features.enableFieldService || data.ticket.serviceLocationType !== 'InShop' || data.ticket.isInternalWorkOrder || data.ticket.slaDueAt || data.ticket.scheduledVisitStart}
 						<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
 							<div class="border-b border-stone/70 pb-3 flex flex-wrap items-center justify-between gap-2">
-								<h2 class="text-subheading font-semibold text-primary">{t('fieldService.sectionTitle')}</h2>
+								<h2 class="text-subheading font-semibold text-primary">{t('tickets.detail.fieldServiceCardTitle')}</h2>
 								<div class="flex items-center gap-2">
 									{#if data.ticket.isInternalWorkOrder}
 										<span class="rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700">
 											{t('workspaces.mode.InternalMaintenance')}
 										</span>
 									{/if}
-									{#if data.ticket.serviceLocationType}
-										<span class="rounded-full bg-ash border border-stone px-2.5 py-0.5 text-[11px] font-semibold text-ink">
-											{data.ticket.serviceLocationType === 'OnSite'
-												? t('fieldService.onSite')
-												: data.ticket.serviceLocationType === 'PickupDelivery'
-													? t('fieldService.pickupDelivery')
-													: t('fieldService.inShop')}
-										</span>
-									{/if}
+									<span class="rounded-full bg-ash border border-stone px-2.5 py-0.5 text-[11px] font-semibold text-ink">
+										{detailDraft.serviceLocationType === 'OnSite'
+											? t('fieldService.onSite')
+											: detailDraft.serviceLocationType === 'PickupDelivery'
+												? t('fieldService.pickupDelivery')
+												: t('fieldService.inShop')}
+									</span>
 								</div>
 							</div>
 
-							<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-								{#if data.ticket.siteAddressSnapshot}
-									<div>
-										<span class="text-[10px] font-semibold uppercase tracking-wide text-secondary block">{t('fieldService.customSiteAddress')}</span>
-										<span class="font-medium text-ink">{data.ticket.siteAddressSnapshot}</span>
-									</div>
+							<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+								<label class="space-y-1.5 block">
+									<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.locationType')}</span>
+									<select
+										name="serviceLocationType"
+										bind:value={detailDraft.serviceLocationType}
+										class="w-full border border-stone rounded-input px-3 py-2 text-body-sm bg-white focus:outline-none focus:border-ink"
+									>
+										<option value="InShop">{t('fieldService.inShop')}</option>
+										<option value="OnSite">{t('fieldService.onSite')}</option>
+										<option value="PickupDelivery">{t('fieldService.pickupDelivery')}</option>
+									</select>
+								</label>
+
+								<label class="space-y-1.5 block">
+									<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.slaDueAt')}</span>
+									<input
+										type="datetime-local"
+										name="slaDueAt"
+										bind:value={detailDraft.slaDueAt}
+										class="w-full border border-stone rounded-input px-3 py-2 text-body-sm bg-white focus:outline-none focus:border-ink"
+									/>
+								</label>
+
+								{#if detailDraft.serviceLocationType !== 'InShop'}
+									<label class="space-y-1.5 block">
+										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.siteLocation')}</span>
+										<select
+											name="siteLocationId"
+											bind:value={detailDraft.siteLocationId}
+											class="w-full border border-stone rounded-input px-3 py-2 text-body-sm bg-white focus:outline-none focus:border-ink"
+										>
+											<option value="">—</option>
+											{#each (data.locations ?? []).filter((loc) => !loc.customerId || loc.customerId === ticket.customerId) as loc (loc.id)}
+												<option value={String(loc.id)}>{loc.label} — {loc.address}</option>
+											{/each}
+										</select>
+									</label>
+									<label class="space-y-1.5 block">
+										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.customSiteAddress')}</span>
+										<input
+											type="text"
+											name="siteAddressSnapshot"
+											bind:value={detailDraft.siteAddressSnapshot}
+											class="w-full border border-stone rounded-input px-3 py-2 text-body-sm bg-white focus:outline-none focus:border-ink"
+										/>
+									</label>
+									<label class="space-y-1.5 block">
+										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.scheduledStart')}</span>
+										<input
+											type="datetime-local"
+											name="scheduledVisitStart"
+											bind:value={detailDraft.scheduledVisitStart}
+											class="w-full border border-stone rounded-input px-3 py-2 text-body-sm bg-white focus:outline-none focus:border-ink"
+										/>
+									</label>
+									<label class="space-y-1.5 block">
+										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.scheduledEnd')}</span>
+										<input
+											type="datetime-local"
+											name="scheduledVisitEnd"
+											bind:value={detailDraft.scheduledVisitEnd}
+											class="w-full border border-stone rounded-input px-3 py-2 text-body-sm bg-white focus:outline-none focus:border-ink"
+										/>
+									</label>
+								{:else}
+									<input type="hidden" name="siteLocationId" value={detailDraft.siteLocationId} />
+									<input type="hidden" name="siteAddressSnapshot" value={detailDraft.siteAddressSnapshot} />
+									<input type="hidden" name="scheduledVisitStart" value={detailDraft.scheduledVisitStart} />
+									<input type="hidden" name="scheduledVisitEnd" value={detailDraft.scheduledVisitEnd} />
 								{/if}
-								{#if data.ticket.scheduledVisitStart}
-									<div>
-										<span class="text-[10px] font-semibold uppercase tracking-wide text-secondary block">{t('fieldService.scheduledStart')}</span>
-										<span class="font-medium text-ink">{formatDate(data.ticket.scheduledVisitStart, data.locale, { dateStyle: 'medium', timeStyle: 'short' })}</span>
-									</div>
-								{/if}
-								{#if data.ticket.departmentCode || data.ticket.costCenter}
-									<div>
-										<span class="text-[10px] font-semibold uppercase tracking-wide text-secondary block">{t('fieldService.departmentCode')} / {t('fieldService.costCenter')}</span>
-										<span class="font-medium text-ink">{[data.ticket.departmentCode, data.ticket.costCenter].filter(Boolean).join(' · ')}</span>
-									</div>
-								{/if}
-								{#if data.ticket.slaDueAt}
-									<div>
-										<span class="text-[10px] font-semibold uppercase tracking-wide text-secondary block">{t('fieldService.slaDueAt')}</span>
-										<span class="font-medium text-ink">{formatDate(data.ticket.slaDueAt, data.locale, { dateStyle: 'medium', timeStyle: 'short' })}</span>
-									</div>
+
+								{#if data.ticket.isInternalWorkOrder || data.user?.workspace?.operatingMode !== 'Commercial'}
+									<label class="space-y-1.5 block">
+										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.departmentCode')}</span>
+										<input
+											type="text"
+											name="departmentCode"
+											bind:value={detailDraft.departmentCode}
+											class="w-full border border-stone rounded-input px-3 py-2 text-body-sm bg-white focus:outline-none focus:border-ink"
+										/>
+									</label>
+									<label class="space-y-1.5 block">
+										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.costCenter')}</span>
+										<input
+											type="text"
+											name="costCenter"
+											bind:value={detailDraft.costCenter}
+											class="w-full border border-stone rounded-input px-3 py-2 text-body-sm bg-white focus:outline-none focus:border-ink"
+										/>
+									</label>
 								{/if}
 							</div>
-
-							{#if (data.ticket.assetCustomFields?.length ?? 0) > 0 || (data.ticket.customFields?.length ?? 0) > 0}
-								<div class="pt-3 border-t border-stone/60">
-									<div class="text-[11px] font-semibold uppercase tracking-wide text-secondary mb-2">{t('fieldService.customFieldsSection')}</div>
-									<div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
-										{#each [...(data.ticket.assetCustomFields ?? []), ...(data.ticket.customFields ?? [])] as cf (cf.fieldDefinitionId)}
-											<div class="rounded-lg bg-surface p-2.5 border border-stone/60">
-												<div class="text-[10px] uppercase tracking-wide text-secondary">{data.locale === 'id' ? cf.labelId : cf.labelEn}</div>
-												<div class="font-semibold text-ink mt-0.5">{cf.value ?? '—'}</div>
-											</div>
-										{/each}
-									</div>
-								</div>
-							{/if}
-
-							{#if (data.ticket.inspections?.length ?? 0) > 0}
-								<div class="pt-3 border-t border-stone/60">
-									<div class="text-[11px] font-semibold uppercase tracking-wide text-secondary mb-2">{t('inspection.title')}</div>
-									<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-										{#each data.ticket.inspections ?? [] as item (item.id)}
-											<div class="flex items-center justify-between gap-2 rounded-lg border border-stone/60 bg-surface px-3 py-2">
-												<div class="min-w-0">
-													<div class="font-medium text-ink truncate">{item.label}</div>
-													{#if item.notes}<div class="text-[11px] text-secondary truncate">{item.notes}</div>{/if}
-												</div>
-												<span class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold {item.status === 'Pass'
-													? 'bg-emerald-100 text-emerald-700'
-													: item.status === 'Issue'
-														? 'bg-amber-100 text-amber-800'
-														: 'bg-ash text-slate-600'}">
-													{item.status === 'Pass' ? t('inspection.pass') : item.status === 'Issue' ? t('inspection.issue') : item.status === 'NotApplicable' ? t('inspection.na') : t('inspection.unchecked')}
-												</span>
-											</div>
-										{/each}
-									</div>
-								</div>
-							{/if}
 						</div>
+					{:else}
+						<input type="hidden" name="serviceLocationType" value={detailDraft.serviceLocationType} />
+						<input type="hidden" name="siteLocationId" value={detailDraft.siteLocationId} />
+						<input type="hidden" name="siteAddressSnapshot" value={detailDraft.siteAddressSnapshot} />
+						<input type="hidden" name="scheduledVisitStart" value={detailDraft.scheduledVisitStart} />
+						<input type="hidden" name="scheduledVisitEnd" value={detailDraft.scheduledVisitEnd} />
+						<input type="hidden" name="slaDueAt" value={detailDraft.slaDueAt} />
 					{/if}
 
 					<!-- Card: Physical Custody & Intake Conditions -->
@@ -847,76 +954,89 @@
 							</label>
 						</div>
 
-						<label class="space-y-1.5 block">
-							<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.physicalConditionNotes')}</span>
-							<textarea
-								name="physicalConditionNotes"
-								rows="2"
-								class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
-								bind:value={detailDraft.physicalConditionNotes}
-							></textarea>
-						</label>
+						{#if features.showPhysicalConditionNotes}
+							<label class="space-y-1.5 block">
+								<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.physicalConditionNotes')}</span>
+								<textarea
+									name="physicalConditionNotes"
+									rows="2"
+									class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
+									bind:value={detailDraft.physicalConditionNotes}
+								></textarea>
+							</label>
+						{:else}
+							<input type="hidden" name="physicalConditionNotes" value={detailDraft.physicalConditionNotes} />
+						{/if}
 					</div>
 
-					<!-- Card: Device Security & Lock Credentials -->
-					<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
-						<div class="border-b border-stone/70 pb-3">
-							<h2 class="text-subheading font-semibold text-primary">{t('tickets.security.title')}</h2>
-							<p class="text-caption text-secondary mt-0.5">{t('tickets.security.subtitle')}</p>
-						</div>
+					<!-- Card: Access & Unlock Credentials (Blueprint Configurable) -->
+					{#if features.showSecurityCredentials && features.securityCredentialMode !== 'None'}
+						<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
+							<div class="border-b border-stone/70 pb-3">
+								<h2 class="text-subheading font-semibold text-primary">{t('tickets.security.title')}</h2>
+								<p class="text-caption text-secondary mt-0.5">{t('tickets.security.subtitle')}</p>
+							</div>
 
-						<div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-							<div class="space-y-2">
-								<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.security.passcodeLabel')}</span>
-								<div class="relative flex items-center">
-									<input
-										type={revealPasscode ? 'text' : 'password'}
-										name="securityPasscode"
-										class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white pr-20 focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors font-mono"
-										bind:value={detailDraft.securityPasscode}
-										placeholder={t('tickets.security.passcodePlaceholder')}
-									/>
-									<div class="absolute right-1.5 flex items-center gap-1">
-										<button
-											type="button"
-											class="p-1 text-secondary hover:text-primary transition-colors cursor-pointer"
-											onclick={() => (revealPasscode = !revealPasscode)}
-										>
-											<span class="material-symbols-outlined text-[18px]">{revealPasscode ? 'visibility_off' : 'visibility'}</span>
-										</button>
-										{#if detailDraft.securityPasscode}
+							<div class="grid grid-cols-1 {features.securityCredentialMode === 'PasscodeAndPattern' ? 'md:grid-cols-2' : ''} gap-6 items-start">
+								<div class="space-y-2 max-w-md">
+									<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.security.passcodeLabel')}</span>
+									<div class="relative flex items-center">
+										<input
+											type={revealPasscode ? 'text' : 'password'}
+											name="securityPasscode"
+											class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white pr-20 focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors font-mono"
+											bind:value={detailDraft.securityPasscode}
+											placeholder={t('tickets.security.passcodePlaceholder')}
+										/>
+										<div class="absolute right-1.5 flex items-center gap-1">
 											<button
 												type="button"
 												class="p-1 text-secondary hover:text-primary transition-colors cursor-pointer"
-												onclick={() => copyPasscode(detailDraft.securityPasscode)}
+												onclick={() => (revealPasscode = !revealPasscode)}
 											>
-												<span class="material-symbols-outlined text-[18px]">{copiedPasscode ? 'check' : 'content_copy'}</span>
+												<span class="material-symbols-outlined text-[18px]">{revealPasscode ? 'visibility_off' : 'visibility'}</span>
 											</button>
-										{/if}
+											{#if detailDraft.securityPasscode}
+												<button
+													type="button"
+													class="p-1 text-secondary hover:text-primary transition-colors cursor-pointer"
+													onclick={() => copyPasscode(detailDraft.securityPasscode)}
+												>
+													<span class="material-symbols-outlined text-[18px]">{copiedPasscode ? 'check' : 'content_copy'}</span>
+												</button>
+											{/if}
+										</div>
 									</div>
 								</div>
-							</div>
 
-							<div class="space-y-2">
-								<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.security.pattern')}</span>
-								<div class="flex items-center gap-4 p-3 bg-ash/30 rounded-lg border border-stone">
-									<PatternLock bind:value={detailDraft.securityPattern} size={110} clearLabel={t('tickets.security.clearPattern')} />
-									<div class="text-body-sm text-secondary min-w-0">
-										{#if detailDraft.securityPattern}
-											<p class="font-mono text-primary font-bold text-caption">{t('tickets.security.patternSequence')}:</p>
-											<p class="font-mono text-primary font-semibold text-xs mt-0.5">{detailDraft.securityPattern}</p>
-										{:else}
-											<p class="text-caption text-secondary/70 italic">{t('tickets.security.patternHint')}</p>
-										{/if}
+								{#if features.securityCredentialMode === 'PasscodeAndPattern'}
+									<div class="space-y-2">
+										<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.security.pattern')}</span>
+										<div class="flex items-center gap-4 p-3 bg-ash/30 rounded-lg border border-stone">
+											<PatternLock bind:value={detailDraft.securityPattern} size={110} clearLabel={t('tickets.security.clearPattern')} />
+											<div class="text-body-sm text-secondary min-w-0">
+												{#if detailDraft.securityPattern}
+													<p class="font-mono text-primary font-bold text-caption">{t('tickets.security.patternSequence')}:</p>
+													<p class="font-mono text-primary font-semibold text-xs mt-0.5">{detailDraft.securityPattern}</p>
+												{:else}
+													<p class="text-caption text-secondary/70 italic">{t('tickets.security.patternHint')}</p>
+												{/if}
+											</div>
+											<input type="hidden" name="securityPattern" bind:value={detailDraft.securityPattern} />
+										</div>
 									</div>
-									<input type="hidden" name="securityPattern" bind:value={detailDraft.securityPattern} />
-								</div>
+								{:else}
+									<input type="hidden" name="securityPattern" value={detailDraft.securityPattern} />
+								{/if}
 							</div>
 						</div>
-					</div>
+					{:else}
+						<input type="hidden" name="securityPasscode" value={detailDraft.securityPasscode} />
+						<input type="hidden" name="securityPattern" value={detailDraft.securityPattern} />
+					{/if}
 
-					<!-- Card: 12-Item Pre-Repair Inspection Matrix -->
-					{#if parsedChecklist.length > 0}
+					<!-- Legacy historical checklist fallback (only if ticket has old preRepairChecklist JSON and zero blueprint inspection items) -->
+					{#if parsedChecklist.length > 0 && (ticket.inspections?.length ?? 0) === 0}
 						<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
 							<div class="flex items-center justify-between border-b border-stone/70 pb-3">
 								<div>
@@ -974,12 +1094,110 @@
 					</div>
 				</form>
 
-				<!-- Card: Accessories Custody & Add Form -->
-				<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
-					<div class="border-b border-stone/70 pb-3">
-						<h2 class="text-subheading font-semibold text-primary">{t('tickets.accessories.title')}</h2>
-						<p class="text-caption text-secondary mt-0.5">{ticket.accessories.length} items logged</p>
+				<!-- Card: Blueprint Inspection Checklist (Editable) -->
+				{#if features.showPreRepairChecklist && (inspectionTemplates.length > 0 || (ticket.inspections?.length ?? 0) > 0)}
+					<form method="POST" action="?/updateInspections" class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4" use:enhance={preserveTicketDetailForm}>
+						<InspectionChecklistRenderer
+							templates={inspectionTemplates}
+							existingItems={ticket.inspections ?? []}
+							bind:entries={inspectionEntries}
+							locale={data.locale}
+						/>
+						<div class="flex justify-end pt-2 border-t border-stone/60">
+							<button type="submit" class="px-button-x py-button-y rounded-button bg-ink text-white font-medium hover:bg-ink/90 active:scale-95 transition-all text-body-sm shadow-xs cursor-pointer">
+								{t('tickets.detail.saveInspectionsBtn')}
+							</button>
+						</div>
+					</form>
+				{/if}
+
+				<!-- Card: Blueprint Dynamic Custom Fields (Editable) -->
+				{#if detailAssetFields.length > 0 || detailTicketFields.length > 0}
+					<form method="POST" action="?/updateCustomFields" class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4" use:enhance={preserveTicketDetailForm}>
+						<div class="border-b border-stone/70 pb-3">
+							<h2 class="text-subheading font-semibold text-primary">{t('fieldService.customFieldsSection')}</h2>
+						</div>
+						<input type="hidden" name="assetId" value={ticket.deviceId} />
+						{#if detailAssetFields.length > 0}
+							<input type="hidden" name="hasAssetCustomFields" value="1" />
+							<div class="space-y-2">
+								<span class="text-label-caps font-label-caps text-secondary uppercase block">{terms.assetSingular}</span>
+								<DynamicFieldRenderer fields={detailAssetFields} bind:values={assetFieldValues} locale={data.locale} namePrefix="assetField" />
+							</div>
+						{/if}
+						{#if detailTicketFields.length > 0}
+							<input type="hidden" name="hasTicketCustomFields" value="1" />
+							<div class="space-y-2 {detailAssetFields.length > 0 ? 'pt-3 border-t border-stone/60' : ''}">
+								<span class="text-label-caps font-label-caps text-secondary uppercase block">{terms.ticketSingular}</span>
+								<DynamicFieldRenderer fields={detailTicketFields} bind:values={ticketFieldValues} locale={data.locale} namePrefix="ticketField" />
+							</div>
+						{/if}
+						<div class="flex justify-end pt-2 border-t border-stone/60">
+							<button type="submit" class="px-button-x py-button-y rounded-button bg-ink text-white font-medium hover:bg-ink/90 active:scale-95 transition-all text-body-sm shadow-xs cursor-pointer">
+								{t('tickets.detail.saveCustomFieldsBtn')}
+							</button>
+						</div>
+					</form>
+				{/if}
+
+				<!-- Card: Multi-Unit Linked Assets -->
+				{#if features.enableFieldService || (ticket.linkedAssets?.length ?? 0) > 0 || availableLinkAssets.length > 0}
+					<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
+						<div class="border-b border-stone/70 pb-3">
+							<h2 class="text-subheading font-semibold text-primary">{t('tickets.detail.linkedAssetsTitle')}</h2>
+						</div>
+						{#if availableLinkAssets.length > 0}
+							<form method="POST" action="?/linkAsset" class="flex flex-col sm:flex-row gap-3" use:enhance={preserveTicketDetailForm}>
+								<select name="assetId" bind:value={linkAssetId} required class="flex-1 border border-stone rounded-input px-3 py-2 text-body-sm bg-white">
+									<option value="">{t('tickets.detail.selectAssetToLink')}</option>
+									{#each availableLinkAssets as candidate (candidate.id)}
+										<option value={String(candidate.id)}>
+											{candidate.deviceType} · {candidate.brand} {candidate.model}{candidate.serialNumber ? ` (${candidate.serialNumber})` : ''}
+										</option>
+									{/each}
+								</select>
+								<input type="text" name="notes" bind:value={linkAssetNotes} placeholder={t('tickets.inventory.notes')} class="sm:w-48 border border-stone rounded-input px-3 py-2 text-body-sm bg-white" />
+								<button type="submit" class="px-button-x py-2 rounded-button bg-ink text-white text-body-sm font-medium hover:bg-ink/90 shrink-0 cursor-pointer">
+									{t('tickets.detail.linkAssetBtn')}
+								</button>
+							</form>
+						{/if}
+
+						{#if (ticket.linkedAssets?.length ?? 0) === 0}
+							<p class="text-caption text-secondary italic">{t('tickets.detail.noLinkedAssets')}</p>
+						{:else}
+							<div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+								{#each ticket.linkedAssets ?? [] as linked (linked.serviceAssetId)}
+									<div class="flex items-start justify-between gap-2 p-2.5 rounded-lg border border-stone bg-ash/20">
+										<div class="min-w-0">
+											<p class="font-medium text-body-sm text-primary truncate">{linked.brand} {linked.model}</p>
+											{#if linked.primaryIdentifier}
+												<p class="text-caption text-secondary font-mono">{linked.primaryIdentifier}</p>
+											{/if}
+											{#if linked.notes}
+												<p class="text-caption text-secondary italic">{linked.notes}</p>
+											{/if}
+										</div>
+										<form method="POST" action="?/unlinkAsset" use:enhance={preserveTicketDetailForm}>
+											<input type="hidden" name="assetId" value={linked.serviceAssetId} />
+											<button type="submit" class="p-1 rounded text-secondary hover:text-error hover:bg-error/10 cursor-pointer" title={t('tickets.detail.unlinkAssetBtn')}>
+												<span class="material-symbols-outlined text-[16px]">close</span>
+											</button>
+										</form>
+									</div>
+								{/each}
+							</div>
+						{/if}
 					</div>
+				{/if}
+
+				<!-- Card: Accessories Custody & Add Form -->
+				{#if features.showAccessories || ticket.accessories.length > 0}
+					<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
+						<div class="border-b border-stone/70 pb-3">
+							<h2 class="text-subheading font-semibold text-primary">{t('tickets.accessories.title')}</h2>
+							<p class="text-caption text-secondary mt-0.5">{t('tickets.detail.itemsLoggedCount', { count: ticket.accessories.length })}</p>
+						</div>
 
 					<form method="POST" action="?/addAccessory" class="space-y-3" use:enhance={addAccessoryForm}>
 						<div class="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-3">
@@ -1041,6 +1259,7 @@
 						{/if}
 					</div>
 				</div>
+				{/if}
 			{/if}
 
 			<!-- TAB 2: DIAGNOSIS & REPAIR -->
@@ -1058,6 +1277,14 @@
 						<input type="hidden" name="securityPasscode" bind:value={detailDraft.securityPasscode} />
 						<input type="hidden" name="securityPattern" bind:value={detailDraft.securityPattern} />
 						<input type="hidden" name="preRepairChecklist" bind:value={detailDraft.preRepairChecklist} />
+						<input type="hidden" name="serviceLocationType" value={detailDraft.serviceLocationType} />
+						<input type="hidden" name="siteLocationId" value={detailDraft.siteLocationId} />
+						<input type="hidden" name="siteAddressSnapshot" value={detailDraft.siteAddressSnapshot} />
+						<input type="hidden" name="scheduledVisitStart" value={detailDraft.scheduledVisitStart} />
+						<input type="hidden" name="scheduledVisitEnd" value={detailDraft.scheduledVisitEnd} />
+						<input type="hidden" name="slaDueAt" value={detailDraft.slaDueAt} />
+						<input type="hidden" name="departmentCode" value={detailDraft.departmentCode} />
+						<input type="hidden" name="costCenter" value={detailDraft.costCenter} />
 
 						<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
 							<div class="border-b border-stone/70 pb-3">
@@ -1072,7 +1299,7 @@
 									rows="3"
 									class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 									bind:value={detailDraft.diagnosis}
-									placeholder="Technical findings and root cause assessment..."
+									placeholder={t('tickets.detail.diagnosisPlaceholder')}
 								></textarea>
 							</label>
 
@@ -1083,35 +1310,40 @@
 									rows="3"
 									class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 									bind:value={detailDraft.repairNotes}
-									placeholder="Actions taken, components replaced, or benchmarks..."
+									placeholder={t('tickets.detail.repairNotesPlaceholder')}
 								></textarea>
 							</label>
 						</div>
 
-						<!-- Warranty terms -->
-						<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
-							<div class="border-b border-stone/70 pb-3">
-								<h2 class="text-subheading font-semibold text-primary">{t('tickets.detail.warrantyTerms')}</h2>
-								<p class="text-caption text-secondary mt-0.5">{t('tickets.detail.warrantyActive')}</p>
-							</div>
-
-							<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-								<div class="space-y-1.5">
-									<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.warrantyUntil')}</span>
-									<DatePicker name="warrantyUntil" bind:value={detailDraft.warrantyUntil} clearable />
+						<!-- Warranty terms (Blueprint Configurable) -->
+						{#if features.showWarrantySection}
+							<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
+								<div class="border-b border-stone/70 pb-3">
+									<h2 class="text-subheading font-semibold text-primary">{t('tickets.detail.warrantyTerms')}</h2>
+									<p class="text-caption text-secondary mt-0.5">{t('tickets.detail.warrantyActive')}</p>
 								</div>
-								<label class="space-y-1.5 block">
-									<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.warrantyTerms')}</span>
-									<textarea
-										name="warrantyTerms"
-										rows="2"
-										class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
-										bind:value={detailDraft.warrantyTerms}
-										placeholder="e.g. 30 days parts warranty..."
-									></textarea>
-								</label>
+
+								<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+									<div class="space-y-1.5">
+										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.warrantyUntil')}</span>
+										<DatePicker name="warrantyUntil" bind:value={detailDraft.warrantyUntil} clearable />
+									</div>
+									<label class="space-y-1.5 block">
+										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.warrantyTerms')}</span>
+										<textarea
+											name="warrantyTerms"
+											rows="2"
+											class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
+											bind:value={detailDraft.warrantyTerms}
+											placeholder={t('tickets.detail.warrantyTermsPlaceholder')}
+										></textarea>
+									</label>
+								</div>
 							</div>
-						</div>
+						{:else}
+							<input type="hidden" name="warrantyUntil" value={detailDraft.warrantyUntil} />
+							<input type="hidden" name="warrantyTerms" value={detailDraft.warrantyTerms} />
+						{/if}
 
 						<!-- Save Bar -->
 						<div class="flex items-center justify-end gap-3 p-4 bg-white border border-stone rounded-xl shadow-2xs">
@@ -1433,6 +1665,7 @@
 					</div>
 
 					<!-- Customer Approvals Card -->
+					{#if showApprovals}
 					<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
 						<div class="border-b border-stone/70 pb-3.5">
 							<h2 class="text-subheading font-semibold text-primary m-0">{t('tickets.detail.approvals')}</h2>
@@ -1698,6 +1931,7 @@
 							</div>
 						</form>
 					</div>
+					{/if}
 				</div>
 			{/if}
 
@@ -1714,11 +1948,11 @@
 						<form method="POST" action="?/uploadAttachment" enctype="multipart/form-data" class="space-y-4" use:enhance={uploadAttachmentForm}>
 							<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 								<div class="space-y-1.5">
-									<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.status')}</span>
+									<span class="text-label-caps font-label-caps text-secondary uppercase">{t('inventory.itemType')}</span>
 									<Dropdown
 										name="attachmentType"
-										value="Other"
-										options={['DeviceFront','DeviceBack','Screen','Keyboard','Accessories','Damage','Receipt','Other'].map(value => ({ value, label: labelFor('tickets.attachmentType', value) }))}
+										value={features.attachmentTypes.includes('Other') ? 'Other' : (features.attachmentTypes[0] ?? 'Other')}
+										options={features.attachmentTypes.map((value) => ({ value, label: labelFor('tickets.attachmentType', value) }))}
 									/>
 								</div>
 								<div class="space-y-1.5">
@@ -2140,7 +2374,7 @@
 				<div class="border-b border-stone/70 pb-2">
 					<h3 class="text-body-base font-semibold text-primary">{t('tickets.detail.assignment')}</h3>
 					<p class="text-caption text-secondary mt-0.5">
-						Current: <strong class="text-primary">{ticket.assignedTechnician ?? t('tickets.detail.unassigned')}</strong>
+						{t('tickets.detail.assignedTechnician')}: <strong class="text-primary">{ticket.assignedTechnician ?? t('tickets.detail.unassigned')}</strong>
 					</p>
 				</div>
 
@@ -2159,6 +2393,7 @@
 			</div>
 
 			<!-- Card 3: Payment & Accounting Balance -->
+			{#if showBilling}
 			<div class="bg-white border border-stone rounded-xl p-5 shadow-2xs space-y-4">
 				<div class="flex items-center justify-between gap-2 border-b border-stone/70 pb-3">
 					<h3 class="text-body-base font-semibold text-primary m-0">{t('tickets.detail.paymentPanel')}</h3>
@@ -2505,8 +2740,14 @@
 					{/if}
 				</div>
 			</div>
+			{:else if ticket.isInternalWorkOrder}
+				<div class="bg-indigo-50/70 border border-indigo-200 rounded-xl p-4 text-caption text-indigo-800">
+					{t('tickets.detail.internalBillingSkippedHint')}
+				</div>
+			{/if}
 
 			<!-- Card 4: Customer WhatsApp Notification -->
+			{#if !ticket.isInternalWorkOrder && ticket.customerPhone}
 			<div class="bg-white border border-stone rounded-xl p-5 shadow-2xs space-y-3">
 				<div class="border-b border-stone/70 pb-2">
 					<h3 class="text-body-base font-semibold text-primary">{t('tickets.whatsapp.title')}</h3>
@@ -2540,6 +2781,7 @@
 					</div>
 				{/if}
 			</div>
+			{/if}
 
 			<!-- Card 5: Internal Staff Note -->
 			<div class="bg-white border border-stone rounded-xl p-5 shadow-2xs space-y-3">

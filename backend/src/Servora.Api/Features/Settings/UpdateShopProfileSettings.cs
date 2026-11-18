@@ -62,7 +62,9 @@ public static class UpdateShopProfileSettings
             RuleFor(request => request.TicketDateFormat).NotEmpty().Must(format => format is "yyyyMMdd" or "yyyyMM" or "yyMMdd");
             RuleFor(request => request.TicketStartNumber).InclusiveBetween(1, 999999);
             RuleFor(request => request.TicketMinDigits).InclusiveBetween(1, 10);
-            RuleFor(request => request.CurrencyCode).Must(code => code is "IDR" or "USD");
+            RuleFor(request => request.CurrencyCode)
+                .Must(code => code is "IDR" or "USD" or "SGD" or "EUR" or "MYR" or "GBP" or "AUD")
+                .WithMessage("Unsupported currency code.");
             RuleFor(request => request.ReceiptFooter).MaximumLength(500);
             RuleFor(request => request.InventoryDefaultTaxPercent).InclusiveBetween(0, 100);
             RuleFor(request => request.InventoryRoundingIncrement).InclusiveBetween(1, 1000000);

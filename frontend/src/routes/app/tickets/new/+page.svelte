@@ -7,22 +7,32 @@
 	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import PatternLock from '$lib/components/PatternLock.svelte';
 	import DynamicFieldRenderer from '$lib/components/DynamicFieldRenderer.svelte';
-	import InspectionChecklistRenderer from '$lib/components/InspectionChecklistRenderer.svelte';
+	import InspectionChecklistRenderer, { type InspectionEntry } from '$lib/components/InspectionChecklistRenderer.svelte';
 	import { compressImage } from '$lib/media';
 	import { sanitizePhoneNumber, handlePhonePaste } from '$lib/utils/phone';
 	import type { ActionData, PageData } from './$types';
-	import { createTranslator, resolveTerminology } from '$lib/i18n';
+	import { createTranslator, resolveFeatureConfig, resolveTerminology } from '$lib/i18n';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const t = $derived(createTranslator(data.locale));
 	const terms = $derived(resolveTerminology(data.user.workspace?.terminology, data.locale));
+	const features = $derived(
+		resolveFeatureConfig(
+			data.user.workspace?.featureConfig ?? data.blueprintConfig?.featureConfig,
+			data.user.workspace?.operatingMode
+		)
+	);
 	const intakeAssetFields = $derived((data.blueprintConfig?.assetFields ?? []).filter((f) => f.showOnIntake));
 	const intakeTicketFields = $derived((data.blueprintConfig?.ticketFields ?? []).filter((f) => f.showOnIntake));
 	const inspectionTemplates = $derived(data.blueprintConfig?.inspectionChecklists ?? []);
-	let serviceLocationType = $state<'InShop' | 'OnSite' | 'PickupDelivery'>('InShop');
+	let serviceLocationType = $state<'InShop' | 'OnSite' | 'PickupDelivery'>(
+		untrack(() => features.defaultServiceLocationType)
+	);
 	let isInternalWorkOrder = $state(untrack(() => data.user.workspace?.operatingMode === 'InternalMaintenance'));
 	let assetFieldValues = $state<Record<number, string>>({});
 	let ticketFieldValues = $state<Record<number, string>>({});
+	let additionalAssetIds = $state<number[]>([]);
+	let showMultiUnitPicker = $state(false);
 	let submitError = $state('');
 	let photoError = $state('');
 	const formResult = $derived(form as { message?: string; messageKey?: string } | null | undefined);
@@ -40,8 +50,16 @@
 	let customerId = $state(untrack(() => data.customers[0]?.id?.toString() ?? ''));
 	let deviceMode = $state<'existing' | 'new'>('existing');
 	const availableDevices = $derived(deviceGroups.find((group) => group.customerId === Number(customerId))?.devices ?? []);
+	const additionalAssetCandidates = $derived(
+		(availableDevices.length > 1 ? availableDevices : (data.allDevices ?? [])).filter(
+			(d) => String(d.id) !== deviceId
+		)
+	);
+	const filteredLocations = $derived(
+		(data.locations ?? []).filter((loc) => !loc.customerId || loc.customerId === Number(customerId))
+	);
 	const selectedCustomer = $derived(customers.find((customer) => customer.id === Number(customerId)));
-	const duplicatePhoneCustomers = $derived(selectedCustomer
+	const duplicatePhoneCustomers = $derived(selectedCustomer && selectedCustomer.phoneNumber
 		? customers.filter((customer) => customer.id !== selectedCustomer.id && customer.phoneNumber === selectedCustomer.phoneNumber)
 		: []);
 	let submitting = $state(false);
@@ -51,12 +69,20 @@
 	let newDeviceBrand = $state('');
 	let newDeviceModel = $state('');
 
-	// Quick Customer Modal State
+	// Quick Customer / Requester Modal State
 	let showQuickCustomerModal = $state(false);
+	let quickRequesterType = $state<'Customer' | 'InternalEmployee' | 'Department' | 'Branch'>(
+		untrack(() => (data.user.workspace?.operatingMode === 'InternalMaintenance' ? 'Department' : 'Customer'))
+	);
 	let quickFullName = $state('');
 	let quickPhoneNumber = $state('');
 	let quickEmail = $state('');
 	let quickAddress = $state('');
+	let quickCompanyName = $state('');
+	let quickDepartmentName = $state('');
+	let quickDepartmentCode = $state('');
+	let quickCostCenter = $state('');
+	let quickEmployeeId = $state('');
 	let quickNotes = $state('');
 	let quickSaving = $state(false);
 	let quickError = $state('');
@@ -68,14 +94,18 @@
 	let showUnsavedModal = $state(false);
 	let pendingNavigationUrl = $state<string | null>(null);
 
+	// Configurable inspection checklist state
+	let inspectionEntries = $state<InspectionEntry[]>([]);
+
 	const isDirty = $derived.by(() => {
 		if (photoPreviews.length > 0) return true;
 		if (accessories.length > 0) return true;
+		if (additionalAssetIds.length > 0) return true;
 		if (complaintText.trim().length > 0) return true;
 		if (initialDiagnosisText.trim().length > 0) return true;
 		if (deviceMode === 'new' && (newDeviceBrand.trim().length > 0 || newDeviceModel.trim().length > 0)) return true;
 		if (lockType !== 'none' || securityPasscode.trim().length > 0 || securityPattern.trim().length > 0) return true;
-		if (inspectionItems.some((item) => item.status !== 'untested' || item.notes.trim().length > 0)) return true;
+		if (inspectionEntries.some((item) => item.status !== 'Unchecked' || item.notes.trim().length > 0)) return true;
 		return false;
 	});
 
@@ -133,7 +163,7 @@
 			quickError = t('customers.form.fullNameRequired');
 			return;
 		}
-		if (!quickPhoneNumber.trim()) {
+		if (quickRequesterType === 'Customer' && !quickPhoneNumber.trim()) {
 			quickError = t('customers.form.phoneRequired');
 			return;
 		}
@@ -144,9 +174,15 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					fullName: quickFullName.trim(),
+					requesterType: quickRequesterType,
 					phoneNumber: sanitizePhoneNumber(quickPhoneNumber),
 					email: quickEmail.trim() || undefined,
 					address: quickAddress.trim() || undefined,
+					companyName: quickCompanyName.trim() || undefined,
+					departmentName: quickDepartmentName.trim() || undefined,
+					departmentCode: quickDepartmentCode.trim() || undefined,
+					costCenter: quickCostCenter.trim() || undefined,
+					employeeId: quickEmployeeId.trim() || undefined,
 					notes: quickNotes.trim() || undefined
 				})
 			});
@@ -166,6 +202,11 @@
 			quickPhoneNumber = '';
 			quickEmail = '';
 			quickAddress = '';
+			quickCompanyName = '';
+			quickDepartmentName = '';
+			quickDepartmentCode = '';
+			quickCostCenter = '';
+			quickEmployeeId = '';
 			quickNotes = '';
 			quickSaving = false;
 			quickSuccessMessage = t('tickets.create.quickCustomerSuccess');
@@ -202,13 +243,9 @@
 	let accessories = $state<string[]>([]);
 	let accessoryInput = $state('');
 
-	const quickAccessoryList = $derived([
-		t('tickets.create.quickCharger'),
-		t('tickets.create.quickBag'),
-		t('tickets.create.quickCable'),
-		t('tickets.create.quickBox'),
-		t('tickets.create.quickStylus')
-	]);
+	const quickAccessoryList = $derived(
+		data.locale === 'id' ? features.quickAccessoriesId : features.quickAccessoriesEn
+	);
 
 	function addAccessory(val: string) {
 		const trimmed = val.trim();
@@ -229,32 +266,25 @@
 		}
 	}
 
-	// Device security state
+	function toggleAdditionalAsset(id: number) {
+		if (additionalAssetIds.includes(id)) {
+			additionalAssetIds = additionalAssetIds.filter((item) => item !== id);
+		} else {
+			additionalAssetIds = [...additionalAssetIds, id];
+		}
+	}
+
+	// Security credential state (respecting featureConfig.securityCredentialMode)
 	let lockType = $state<'none' | 'passcode' | 'pattern'>('none');
 	let securityPasscode = $state('');
 	let securityPattern = $state('');
 	let showPasscode = $state(false);
-
-	// Inspection checklist state
-	let inspectionItems = $state([
-		{ id: 'power', labelKey: 'tickets.inspection.item.power', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'display', labelKey: 'tickets.inspection.item.display', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'touch', labelKey: 'tickets.inspection.item.touch', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'charging', labelKey: 'tickets.inspection.item.charging', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'battery', labelKey: 'tickets.inspection.item.battery', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'keyboard', labelKey: 'tickets.inspection.item.keyboard', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'camera', labelKey: 'tickets.inspection.item.camera', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'speaker', labelKey: 'tickets.inspection.item.speaker', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'mic', labelKey: 'tickets.inspection.item.mic', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'network', labelKey: 'tickets.inspection.item.network', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'body', labelKey: 'tickets.inspection.item.body', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' },
-		{ id: 'liquid', labelKey: 'tickets.inspection.item.liquid', status: 'untested' as 'pass' | 'fail' | 'untested' | 'na', notes: '' }
-	]);
-
-	function setInspectionStatus(id: string, status: 'pass' | 'fail' | 'untested' | 'na') {
-		const item = inspectionItems.find((i) => i.id === id);
-		if (item) item.status = status;
-	}
+	$effect(() => {
+		if (features.securityCredentialMode === 'PasscodeOnly' && lockType === 'pattern') {
+			lockType = 'passcode';
+			securityPattern = '';
+		}
+	});
 
 	// Photo upload state & previews
 	let photoFiles = $state<File[]>([]);
@@ -332,11 +362,15 @@
 	<PageHeader
 		items={[
 			{ label: t('common.console'), href: '/app' },
-			{ label: t('nav.tickets'), href: '/app/tickets' },
-			{ label: t('tickets.create.title') }
+			{ label: terms.ticketPlural, href: '/app/tickets' },
+			{ label: `${t('nav.newTicket')} (${terms.ticketSingular})` }
 		]}
-		title={t('tickets.create.title')}
-		subtitle={t('tickets.create.subtitle')}
+		title={`${t('tickets.create.title')} — ${terms.ticketSingular}`}
+		subtitle={t('tickets.create.subtitleDynamic', {
+			ticket: terms.ticketSingular.toLowerCase(),
+			requester: terms.requesterSingular.toLowerCase(),
+			asset: terms.assetSingular.toLowerCase()
+		})}
 	/>
 
 	<form
@@ -408,17 +442,17 @@
 			</div>
 		{/if}
 
-		<!-- Section 1: Customer & Assignment -->
+		<!-- Section 1: Requester & Assignment -->
 		<section class="bg-white border border-stone rounded-xl p-5 sm:p-6 space-y-5 shadow-2xs">
 			<div class="border-b border-stone/70 pb-3">
-				<h2 class="text-subheading font-semibold text-primary">{t('tickets.detail.customer')} & {t('tickets.detail.assignedTechnician')}</h2>
+				<h2 class="text-subheading font-semibold text-primary">{terms.requesterSingular} & {t('tickets.detail.assignedTechnician')}</h2>
 				<p class="text-caption text-secondary mt-0.5">{t('tickets.create.customerSectionHint')}</p>
 			</div>
 
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 				<div class="space-y-1.5 md:col-span-2">
 					<div class="flex flex-wrap items-center justify-between gap-2">
-						<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.customer')} *</span>
+						<span class="text-label-caps font-label-caps text-secondary uppercase">{terms.requesterSingular} *</span>
 						<button
 							type="button"
 							class="text-caption text-secondary hover:text-ink font-medium transition-colors cursor-pointer inline-flex items-center gap-1"
@@ -440,8 +474,11 @@
 					<Dropdown
 						name="customerId"
 						bind:value={customerId}
-						options={customers.map(c => ({ value: c.id.toString(), label: `${c.fullName} · ${c.phoneNumber}` }))}
-						placeholder={t('tickets.detail.customer')}
+						options={customers.map((c) => ({
+							value: c.id.toString(),
+							label: `${c.fullName}${c.departmentCode ? ` [${c.departmentCode}]` : ''}${c.phoneNumber ? ` · ${c.phoneNumber}` : ''}`
+						}))}
+						placeholder={terms.requesterSingular}
 						searchable={true}
 						searchPlaceholder={t('tickets.create.searchCustomerPlaceholder')}
 						noOptionsLabel={t('tickets.create.noCustomersFound')}
@@ -493,12 +530,17 @@
 			</div>
 		</section>
 
-		<!-- Section 2: Device Details -->
+		<!-- Section 2: Service Asset / Unit Details -->
 		<section class="bg-white border border-stone rounded-xl p-5 sm:p-6 space-y-5 shadow-2xs">
 			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone/70 pb-3">
 				<div>
-					<h2 class="text-subheading font-semibold text-primary">{t('tickets.detail.device')}</h2>
-					<p class="text-caption text-secondary mt-0.5">{t('tickets.create.deviceSectionHint')}</p>
+					<h2 class="text-subheading font-semibold text-primary">{terms.assetSingular}</h2>
+					<p class="text-caption text-secondary mt-0.5">
+						{t('tickets.create.deviceSectionHintDynamic', {
+							requester: terms.requesterSingular.toLowerCase(),
+							asset: terms.assetSingular.toLowerCase()
+						})}
+					</p>
 				</div>
 				<div class="inline-flex flex-wrap self-start sm:self-auto rounded-input border border-stone/80 bg-ash/50 p-1 text-caption font-medium shadow-2xs">
 					<button
@@ -514,32 +556,77 @@
 						class="px-3 py-1.5 rounded-button transition-all cursor-pointer {deviceMode === 'new' ? 'bg-white text-ink font-semibold shadow-xs' : 'text-secondary hover:text-ink'}"
 						onclick={() => (deviceMode = 'new')}
 					>
-						{t('tickets.create.newDevice')}
+						+ {terms.assetSingular}
 					</button>
 					<input type="hidden" name="deviceMode" value={deviceMode} />
 				</div>
 			</div>
 
 			{#if deviceMode === 'existing'}
-				<div class="space-y-1.5">
-					<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.device')} *</span>
-					{#if availableDevices.length > 0}
-						<Dropdown
-							name="deviceId"
-							bind:value={deviceId}
-							options={availableDevices.map(d => ({ value: d.id.toString(), label: `${d.deviceType} · ${d.brand} ${d.model}${d.serialNumber ? ` · ${d.serialNumber}` : ''}` }))}
-							placeholder={t('tickets.detail.device')}
-						/>
-					{:else}
-						<div class="p-4 border border-stone/80 rounded-lg bg-ash/30 text-body-sm text-secondary flex flex-wrap items-center justify-between gap-3">
-							<span>{t('tickets.create.deviceRequired')}</span>
+				<div class="space-y-3">
+					<div class="space-y-1.5">
+						<span class="text-label-caps font-label-caps text-secondary uppercase">{terms.assetSingular} *</span>
+						{#if availableDevices.length > 0}
+							<Dropdown
+								name="deviceId"
+								bind:value={deviceId}
+								options={availableDevices.map((d) => ({
+									value: d.id.toString(),
+									label: `${d.deviceType} · ${d.brand} ${d.model}${d.serialNumber ? ` · ${d.serialNumber}` : ''}`
+								}))}
+								placeholder={terms.assetSingular}
+							/>
+						{:else}
+							<div class="p-4 border border-stone/80 rounded-lg bg-ash/30 text-body-sm text-secondary flex flex-wrap items-center justify-between gap-3">
+								<span>{t('tickets.create.deviceRequired')}</span>
+								<button
+									type="button"
+									class="text-ink font-semibold hover:underline cursor-pointer shrink-0"
+									onclick={() => (deviceMode = 'new')}
+								>
+									+ {terms.assetSingular} &rarr;
+								</button>
+							</div>
+						{/if}
+					</div>
+
+					{#if additionalAssetCandidates.length > 0}
+						<div class="rounded-lg border border-stone/70 bg-surface/50 p-3 space-y-2">
 							<button
 								type="button"
-								class="text-ink font-semibold hover:underline cursor-pointer shrink-0"
-								onclick={() => (deviceMode = 'new')}
+								class="flex w-full items-center justify-between text-left text-xs font-semibold text-ink cursor-pointer"
+								onclick={() => (showMultiUnitPicker = !showMultiUnitPicker)}
 							>
-								{t('tickets.create.newDevice')} &rarr;
+								<span>
+									{t('tickets.create.additionalAssets', { assets: terms.assetPlural })}
+									{#if additionalAssetIds.length > 0}
+										<span class="ml-1.5 rounded-full bg-claytile px-2 py-0.5 text-[10px] text-white">{additionalAssetIds.length}</span>
+									{/if}
+								</span>
+								<span class="material-symbols-outlined text-[16px] text-secondary">{showMultiUnitPicker ? 'expand_less' : 'expand_more'}</span>
 							</button>
+							{#if showMultiUnitPicker}
+								<p class="text-caption text-secondary">{t('tickets.create.additionalAssetsHint')}</p>
+								<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pt-1">
+									{#each additionalAssetCandidates as unit (unit.id)}
+										<label class="flex items-center gap-2 rounded border border-stone/70 bg-white px-2.5 py-1.5 text-xs cursor-pointer hover:border-claytile/60">
+											<input
+												type="checkbox"
+												name="additionalAssetIds"
+												value={unit.id}
+												checked={additionalAssetIds.includes(unit.id)}
+												onchange={() => toggleAdditionalAsset(unit.id)}
+												class="rounded border-stone text-claytile"
+											/>
+											<span class="truncate text-ink font-medium">{unit.deviceType} · {unit.brand} {unit.model}{unit.serialNumber ? ` (${unit.serialNumber})` : ''}</span>
+										</label>
+									{/each}
+								</div>
+							{:else}
+								{#each additionalAssetIds as extraId (extraId)}
+									<input type="hidden" name="additionalAssetIds" value={extraId} />
+								{/each}
+							{/if}
 						</div>
 					{/if}
 				</div>
@@ -578,7 +665,7 @@
 						/>
 					</label>
 					<label class="space-y-1.5">
-						<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.create.serialNumber')}</span>
+						<span class="text-label-caps font-label-caps text-secondary uppercase">{terms.primaryIdentifierLabel}</span>
 						<input
 							type="text"
 							name="newDeviceSerialNumber"
@@ -587,7 +674,7 @@
 						/>
 					</label>
 					<label class="space-y-1.5 md:col-span-2">
-						<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.create.identifier')}</span>
+						<span class="text-label-caps font-label-caps text-secondary uppercase">{terms.secondaryIdentifierLabel}</span>
 						<input
 							type="text"
 							name="newDeviceIdentifierLabel"
@@ -657,7 +744,7 @@
 						<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.siteLocation')}</span>
 						<select name="siteLocationId" class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink">
 							<option value="">—</option>
-							{#each data.locations as loc (loc.id)}
+							{#each filteredLocations as loc (loc.id)}
 								<option value={loc.id}>{loc.label} — {loc.address}</option>
 							{/each}
 						</select>
@@ -702,13 +789,6 @@
 				<div class="pt-2 border-t border-stone/60">
 					<p class="text-label-caps font-label-caps text-secondary uppercase mb-3">{t('fieldService.customFieldsSection')}</p>
 					<DynamicFieldRenderer fields={intakeTicketFields} bind:values={ticketFieldValues} locale={data.locale} namePrefix="ticketField" />
-				</div>
-			{/if}
-
-			{#if inspectionTemplates.length > 0}
-				<div class="pt-2 border-t border-stone/60">
-					<p class="text-label-caps font-label-caps text-secondary uppercase mb-3">{t('inspection.title')}</p>
-					<InspectionChecklistRenderer templates={inspectionTemplates} locale={data.locale} />
 				</div>
 			{/if}
 		</section>
@@ -758,74 +838,80 @@
 				</div>
 			</div>
 
-			<label class="space-y-1.5 block">
-				<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.physicalConditionNotes')}</span>
-				<textarea
-					name="physicalConditionNotes"
-					rows="2"
-					class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
-					placeholder={t('tickets.create.physicalConditionPlaceholder')}
-				></textarea>
-			</label>
+			{#if features.showPhysicalConditionNotes}
+				<label class="space-y-1.5 block">
+					<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.physicalConditionNotes')}</span>
+					<textarea
+						name="physicalConditionNotes"
+						rows="2"
+						class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
+						placeholder={t('tickets.create.physicalConditionPlaceholder')}
+					></textarea>
+				</label>
+			{/if}
 
-			<!-- Accessories received -->
-			<div class="space-y-2">
-				<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.accessorySummary')}</span>
-				
-				{#if accessories.length > 0}
-					<div class="flex flex-wrap gap-1.5 p-2 border border-stone/60 rounded-input bg-ash/20">
-						{#each accessories as item, index (item)}
-							<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-stone text-caption font-medium text-ink shadow-2xs">
-								<span>{item}</span>
-								<button
-									type="button"
-									class="text-secondary hover:text-error text-xs font-bold leading-none cursor-pointer w-4 h-4 inline-flex items-center justify-center rounded-full hover:bg-stone/30 transition-colors"
-									onclick={() => removeAccessory(index)}
-									aria-label={t('tickets.create.removeAccessory')}
-								>
-									×
-								</button>
-							</span>
-						{/each}
-					</div>
-				{/if}
+			{#if features.showAccessories}
+				<!-- Accessories received -->
+				<div class="space-y-2">
+					<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.accessorySummary')}</span>
+					
+					{#if accessories.length > 0}
+						<div class="flex flex-wrap gap-1.5 p-2 border border-stone/60 rounded-input bg-ash/20">
+							{#each accessories as item, index (item)}
+								<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-stone text-caption font-medium text-ink shadow-2xs">
+									<span>{item}</span>
+									<button
+										type="button"
+										class="text-secondary hover:text-error text-xs font-bold leading-none cursor-pointer w-4 h-4 inline-flex items-center justify-center rounded-full hover:bg-stone/30 transition-colors"
+										onclick={() => removeAccessory(index)}
+										aria-label={t('tickets.create.removeAccessory')}
+									>
+										×
+									</button>
+								</span>
+							{/each}
+						</div>
+					{/if}
 
-				<div class="flex items-center gap-2">
-					<input
-						type="text"
-						bind:value={accessoryInput}
-						onkeydown={handleAccessoryKeydown}
-						class="flex-1 h-10 border border-stone rounded-input px-3.5 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
-						placeholder={`${t('tickets.create.accessoryPlaceholder')} ${t('tickets.create.pressEnterToAdd')}`}
-					/>
-					<button
-						type="button"
-						class="h-10 px-3.5 rounded-button border border-stone bg-ash/50 text-ink hover:bg-ash active:scale-95 text-caption font-medium transition-all cursor-pointer shrink-0 whitespace-nowrap"
-						onclick={() => {
-							addAccessory(accessoryInput);
-							accessoryInput = '';
-						}}
-					>
-						{t('tickets.create.addAccessory')}
-					</button>
-				</div>
-
-				<div class="flex flex-wrap items-center gap-1.5 pt-1">
-					<span class="text-caption text-secondary font-medium mr-1">{t('tickets.create.quickAccessories')}</span>
-					{#each quickAccessoryList as item (item)}
+					<div class="flex items-center gap-2">
+						<input
+							type="text"
+							bind:value={accessoryInput}
+							onkeydown={handleAccessoryKeydown}
+							class="flex-1 h-10 border border-stone rounded-input px-3.5 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
+							placeholder={`${t('tickets.create.accessoryPlaceholder')} ${t('tickets.create.pressEnterToAdd')}`}
+						/>
 						<button
 							type="button"
-							class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-caption border border-stone/80 bg-white text-secondary hover:text-ink hover:border-ink/40 active:scale-95 transition-all cursor-pointer font-medium disabled:opacity-40 disabled:pointer-events-none"
-							disabled={accessories.includes(item)}
-							onclick={() => addAccessory(item)}
+							class="h-10 px-3.5 rounded-button border border-stone bg-ash/50 text-ink hover:bg-ash active:scale-95 text-caption font-medium transition-all cursor-pointer shrink-0 whitespace-nowrap"
+							onclick={() => {
+								addAccessory(accessoryInput);
+								accessoryInput = '';
+							}}
 						>
-							<span>+</span> {item}
+							{t('tickets.create.addAccessory')}
 						</button>
-					{/each}
-				</div>
+					</div>
 
-				<input type="hidden" name="accessorySummary" value={accessories.join(', ')} />
-			</div>
+					{#if quickAccessoryList.length > 0}
+						<div class="flex flex-wrap items-center gap-1.5 pt-1">
+							<span class="text-caption text-secondary font-medium mr-1">{t('tickets.create.quickAccessories')}</span>
+							{#each quickAccessoryList as item (item)}
+								<button
+									type="button"
+									class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-caption border border-stone/80 bg-white text-secondary hover:text-ink hover:border-ink/40 active:scale-95 transition-all cursor-pointer font-medium disabled:opacity-40 disabled:pointer-events-none"
+									disabled={accessories.includes(item)}
+									onclick={() => addAccessory(item)}
+								>
+									<span>+</span> {item}
+								</button>
+							{/each}
+						</div>
+					{/if}
+
+					<input type="hidden" name="accessorySummary" value={accessories.join(', ')} />
+				</div>
+			{/if}
 
 			<!-- Intake Photos Upload & Preview Dropzone -->
 			<div class="space-y-2">
@@ -929,169 +1015,110 @@
 			</div>
 		</section>
 
-		<!-- Section 5: Device Security & Lock -->
-		<section class="bg-white border border-stone rounded-xl p-5 sm:p-6 space-y-5 shadow-2xs">
-			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone/70 pb-3">
-				<div>
-					<h2 class="text-subheading font-semibold text-primary">{t('tickets.security.title')}</h2>
-					<p class="text-caption text-secondary mt-0.5">{t('tickets.security.subtitle')}</p>
-				</div>
-				<div class="inline-flex flex-wrap self-start sm:self-auto rounded-input border border-stone/80 bg-ash/50 p-1 text-caption font-medium shadow-2xs">
-					<button
-						type="button"
-						class="px-3 py-1.5 rounded-button transition-all cursor-pointer {lockType === 'none' ? 'bg-white text-ink font-semibold shadow-xs' : 'text-secondary hover:text-ink'}"
-						onclick={() => (lockType = 'none')}
-					>
-						{t('tickets.security.none')}
-					</button>
-					<button
-						type="button"
-						class="px-3 py-1.5 rounded-button transition-all cursor-pointer {lockType === 'passcode' ? 'bg-white text-ink font-semibold shadow-xs' : 'text-secondary hover:text-ink'}"
-						onclick={() => (lockType = 'passcode')}
-					>
-						{t('tickets.security.passcode')}
-					</button>
-					<button
-						type="button"
-						class="px-3 py-1.5 rounded-button transition-all cursor-pointer {lockType === 'pattern' ? 'bg-white text-ink font-semibold shadow-xs' : 'text-secondary hover:text-ink'}"
-						onclick={() => (lockType = 'pattern')}
-					>
-						{t('tickets.security.pattern')}
-					</button>
-				</div>
-			</div>
-
-			{#if lockType === 'passcode'}
-				<div class="space-y-1.5 max-w-md">
-					<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.security.passcodeLabel')}</span>
-					<div class="relative flex items-center">
-						<input
-							type={showPasscode ? 'text' : 'password'}
-							name="securityPasscode"
-							autocomplete="new-password"
-							bind:value={securityPasscode}
-							class="w-full border border-stone rounded-input px-3.5 py-2.5 text-body-sm bg-white pr-20 focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
-							placeholder={t('tickets.security.passcodePlaceholder')}
-						/>
+		<!-- Section 5: Access & Unlock Credentials (Blueprint Configurable) -->
+		{#if features.showSecurityCredentials && features.securityCredentialMode !== 'None'}
+			<section class="bg-white border border-stone rounded-xl p-5 sm:p-6 space-y-5 shadow-2xs">
+				<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone/70 pb-3">
+					<div>
+						<h2 class="text-subheading font-semibold text-primary">{t('tickets.security.title')}</h2>
+						<p class="text-caption text-secondary mt-0.5">{t('tickets.security.subtitle')}</p>
+					</div>
+					<div class="inline-flex flex-wrap self-start sm:self-auto rounded-input border border-stone/80 bg-ash/50 p-1 text-caption font-medium shadow-2xs">
 						<button
 							type="button"
-							class="absolute right-2 px-2.5 py-1 text-xs text-secondary hover:text-ink font-medium cursor-pointer transition-colors"
-							onclick={() => (showPasscode = !showPasscode)}
+							class="px-3 py-1.5 rounded-button transition-all cursor-pointer {lockType === 'none' ? 'bg-white text-ink font-semibold shadow-xs' : 'text-secondary hover:text-ink'}"
+							onclick={() => (lockType = 'none')}
 						>
-							{showPasscode ? t('tickets.security.hide') : t('tickets.security.show')}
+							{t('tickets.security.none')}
 						</button>
-					</div>
-				</div>
-			{:else if lockType === 'pattern'}
-				<div class="flex flex-col sm:flex-row items-start sm:items-center gap-6 bg-ash/20 p-5 rounded-lg border border-stone/80">
-					<PatternLock bind:value={securityPattern} clearLabel={t('tickets.security.clearPattern')} />
-					<div class="space-y-2 text-body-sm">
-						<p class="font-semibold text-primary">{t('tickets.security.pattern')}</p>
-						<p class="text-secondary text-caption">{t('tickets.security.patternHint')}</p>
-						{#if securityPattern}
-							<div class="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-ash border border-stone text-ink font-mono text-xs font-bold shadow-2xs">
-								<span>{t('tickets.security.patternSequence')}:</span>
-								<span>{securityPattern}</span>
-							</div>
+						<button
+							type="button"
+							class="px-3 py-1.5 rounded-button transition-all cursor-pointer {lockType === 'passcode' ? 'bg-white text-ink font-semibold shadow-xs' : 'text-secondary hover:text-ink'}"
+							onclick={() => (lockType = 'passcode')}
+						>
+							{t('tickets.security.passcode')}
+						</button>
+						{#if features.securityCredentialMode === 'PasscodeAndPattern'}
+							<button
+								type="button"
+								class="px-3 py-1.5 rounded-button transition-all cursor-pointer {lockType === 'pattern' ? 'bg-white text-ink font-semibold shadow-xs' : 'text-secondary hover:text-ink'}"
+								onclick={() => (lockType = 'pattern')}
+							>
+								{t('tickets.security.pattern')}
+							</button>
 						{/if}
-						<input type="hidden" name="securityPattern" value={securityPattern} />
 					</div>
 				</div>
-			{/if}
 
-			{#if lockType === 'none'}
-				<input type="hidden" name="securityPasscode" value="" />
-				<input type="hidden" name="securityPattern" value="" />
-			{/if}
-		</section>
-
-		<!-- Section 6: Pre-Repair Inspection Checklist -->
-		<section class="bg-white border border-stone rounded-xl p-5 sm:p-6 space-y-5 shadow-2xs">
-			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone/70 pb-3">
-				<div>
-					<h2 class="text-subheading font-semibold text-primary">{t('tickets.inspection.title')}</h2>
-					<p class="text-caption text-secondary mt-0.5">{t('tickets.inspection.subtitle')}</p>
-				</div>
-				<div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-caption text-secondary">
-					<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span> {t('tickets.inspection.pass')}</span>
-					<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-600"></span> {t('tickets.inspection.fail')}</span>
-					<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-slate-600"></span> {t('tickets.inspection.untested')}</span>
-					<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-stone"></span> {t('tickets.inspection.na')}</span>
-				</div>
-			</div>
-
-			<input type="hidden" name="preRepairChecklist" value={JSON.stringify(inspectionItems)} />
-
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-				{#each inspectionItems as item (item.id)}
-					<div class="rounded-lg border border-stone/70 bg-white p-3 space-y-2 hover:border-stone transition-colors shadow-2xs">
-						<div class="flex items-center justify-between gap-2">
-							<span class="text-body-sm font-medium text-primary truncate">{t(item.labelKey)}</span>
-							<div class="inline-flex shrink-0 rounded-md border border-stone/80 bg-ash/60 p-0.5 text-xs font-semibold shadow-2xs">
-								<button
-									type="button"
-									class="px-2 py-0.5 rounded transition-all cursor-pointer {item.status === 'pass' ? 'bg-emerald-600 text-white shadow-xs' : 'text-secondary hover:text-ink'}"
-									onclick={() => setInspectionStatus(item.id, 'pass')}
-									title={t('tickets.inspection.pass')}
-									aria-label={t('tickets.inspection.pass')}
-									aria-pressed={item.status === 'pass'}
-								>
-									✓
-								</button>
-								<button
-									type="button"
-									class="px-2 py-0.5 rounded transition-all cursor-pointer {item.status === 'fail' ? 'bg-rose-600 text-white shadow-xs' : 'text-secondary hover:text-ink'}"
-									onclick={() => setInspectionStatus(item.id, 'fail')}
-									title={t('tickets.inspection.fail')}
-									aria-label={t('tickets.inspection.fail')}
-									aria-pressed={item.status === 'fail'}
-								>
-									✕
-								</button>
-								<button
-									type="button"
-									class="px-2 py-0.5 rounded transition-all cursor-pointer {item.status === 'untested' ? 'bg-slate-700 text-white shadow-xs' : 'text-secondary hover:text-ink'}"
-									onclick={() => setInspectionStatus(item.id, 'untested')}
-									title={t('tickets.inspection.untested')}
-									aria-label={t('tickets.inspection.untested')}
-									aria-pressed={item.status === 'untested'}
-								>
-									?
-								</button>
-								<button
-									type="button"
-									class="px-2 py-0.5 rounded transition-all cursor-pointer {item.status === 'na' ? 'bg-white text-ink font-semibold shadow-xs' : 'text-secondary hover:text-ink'}"
-									onclick={() => setInspectionStatus(item.id, 'na')}
-									title={t('tickets.inspection.na')}
-									aria-label={t('tickets.inspection.na')}
-									aria-pressed={item.status === 'na'}
-								>
-									-
-								</button>
-							</div>
+				{#if lockType === 'passcode'}
+					<div class="space-y-1.5 max-w-md">
+						<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.security.passcodeLabel')}</span>
+						<div class="relative flex items-center">
+							<input
+								type={showPasscode ? 'text' : 'password'}
+								name="securityPasscode"
+								autocomplete="new-password"
+								bind:value={securityPasscode}
+								class="w-full border border-stone rounded-input px-3.5 py-2.5 text-body-sm bg-white pr-20 focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
+								placeholder={t('tickets.security.passcodePlaceholder')}
+							/>
+							<button
+								type="button"
+								class="absolute right-2 px-2.5 py-1 text-xs text-secondary hover:text-ink font-medium cursor-pointer transition-colors"
+								onclick={() => (showPasscode = !showPasscode)}
+							>
+								{showPasscode ? t('tickets.security.hide') : t('tickets.security.show')}
+							</button>
 						</div>
-						<input
-							type="text"
-							bind:value={item.notes}
-							placeholder={t('tickets.inspection.notesPlaceholder')}
-							class="w-full border border-stone/60 rounded px-2.5 py-1 text-caption bg-ash/20 text-primary placeholder:text-secondary/40 focus:bg-white focus:border-ink focus:outline-none transition-colors"
-						/>
 					</div>
-				{/each}
-			</div>
-		</section>
+				{:else if lockType === 'pattern' && features.securityCredentialMode === 'PasscodeAndPattern'}
+					<div class="flex flex-col sm:flex-row items-start sm:items-center gap-6 bg-ash/20 p-5 rounded-lg border border-stone/80">
+						<PatternLock bind:value={securityPattern} clearLabel={t('tickets.security.clearPattern')} />
+						<div class="space-y-2 text-body-sm">
+							<p class="font-semibold text-primary">{t('tickets.security.pattern')}</p>
+							<p class="text-secondary text-caption">{t('tickets.security.patternHint')}</p>
+							{#if securityPattern}
+								<div class="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-ash border border-stone text-ink font-mono text-xs font-bold shadow-2xs">
+									<span>{t('tickets.security.patternSequence')}:</span>
+									<span>{securityPattern}</span>
+								</div>
+							{/if}
+							<input type="hidden" name="securityPattern" value={securityPattern} />
+						</div>
+					</div>
+				{/if}
+
+				{#if lockType === 'none'}
+					<input type="hidden" name="securityPasscode" value="" />
+					<input type="hidden" name="securityPattern" value="" />
+				{/if}
+			</section>
+		{/if}
+
+		<!-- Section 6: Configurable Intake Inspection Checklist (Driven by Blueprint) -->
+		{#if features.showPreRepairChecklist && inspectionTemplates.length > 0}
+			<section class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs">
+				<InspectionChecklistRenderer
+					templates={inspectionTemplates}
+					bind:entries={inspectionEntries}
+					locale={data.locale}
+				/>
+			</section>
+		{/if}
 
 		<!-- Section 7: Actions & Approvals -->
 		<div class="bg-white border border-stone rounded-xl p-5 sm:p-6 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
 			<div class="flex flex-wrap items-center gap-6 text-body-sm text-secondary">
-				<label class="flex items-center gap-2 cursor-pointer select-none">
-					<input type="checkbox" name="approvalRequired" class="rounded" />
-					<span class="text-primary font-medium">{t('tickets.create.approvalRequired')}</span>
-				</label>
-				<label class="flex items-center gap-2 cursor-pointer select-none">
-					<input type="checkbox" name="isPreApproved" class="rounded" />
-					<span class="text-primary font-medium">{t('tickets.create.preApproved')}</span>
-				</label>
+				{#if features.showCustomerApprovals && !isInternalWorkOrder}
+					<label class="flex items-center gap-2 cursor-pointer select-none">
+						<input type="checkbox" name="approvalRequired" class="rounded" />
+						<span class="text-primary font-medium">{t('tickets.create.approvalRequired')}</span>
+					</label>
+					<label class="flex items-center gap-2 cursor-pointer select-none">
+						<input type="checkbox" name="isPreApproved" class="rounded" />
+						<span class="text-primary font-medium">{t('tickets.create.preApproved')}</span>
+					</label>
+				{/if}
 			</div>
 
 			<div class="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-3">
@@ -1113,7 +1140,7 @@
 						</svg>
 						<span>{t('tickets.create.submitting')}</span>
 					{:else}
-						<span>{t('tickets.create.submit')}</span>
+						<span>{t('tickets.create.submit')} — {terms.ticketSingular}</span>
 					{/if}
 				</button>
 			</div>
@@ -1138,7 +1165,7 @@
 				<div class="flex items-start justify-between gap-4 border-b border-stone/70 pb-3">
 					<div>
 						<h3 id="quick-customer-title" class="text-heading font-semibold text-primary">
-							{t('tickets.create.quickCustomerTitle')}
+							{t('tickets.create.quickCustomerTitle', { requester: terms.requesterSingular })}
 						</h3>
 						<p class="text-caption text-secondary mt-0.5">
 							{t('tickets.create.quickCustomerSubtitle')}
@@ -1163,6 +1190,21 @@
 				{/if}
 
 				<form onsubmit={handleQuickCustomerSubmit} class="space-y-4">
+					<label class="space-y-1 block">
+						<span class="text-label-caps font-label-caps text-secondary uppercase text-[11px] font-bold tracking-wider">
+							{t('customers.form.requesterType')}
+						</span>
+						<select
+							bind:value={quickRequesterType}
+							class="w-full h-10 border border-stone rounded-input px-3 text-body-sm bg-white focus:outline-none focus:border-ink"
+						>
+							<option value="Customer">{t('customers.type.Customer')}</option>
+							<option value="Department">{t('customers.type.Department')}</option>
+							<option value="InternalEmployee">{t('customers.type.InternalEmployee')}</option>
+							<option value="Branch">{t('customers.type.Branch')}</option>
+						</select>
+					</label>
+
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 						<label class="space-y-1 block sm:col-span-1">
 							<span class="text-label-caps font-label-caps text-secondary uppercase text-[11px] font-bold tracking-wider">
@@ -1179,7 +1221,7 @@
 
 						<label class="space-y-1 block sm:col-span-1">
 							<span class="text-label-caps font-label-caps text-secondary uppercase text-[11px] font-bold tracking-wider">
-								{t('customers.form.phoneNumber')} *
+								{t('customers.form.phoneNumber')} {quickRequesterType === 'Customer' ? '*' : ''}
 							</span>
 							<input
 								type="tel"
@@ -1192,12 +1234,73 @@
 									handlePhonePaste(e);
 									quickPhoneNumber = (e.currentTarget as HTMLInputElement).value;
 								}}
-								required
-								placeholder={t('customers.form.phonePlaceholder')}
+								required={quickRequesterType === 'Customer'}
+								placeholder={quickRequesterType === 'Customer' ? t('customers.form.phonePlaceholder') : t('customers.form.phoneOptionalInternal')}
 								class="w-full h-10 border border-stone rounded-input px-3 text-body-sm font-mono bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 							/>
 						</label>
 					</div>
+
+					{#if quickRequesterType !== 'Customer'}
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<label class="space-y-1 block">
+								<span class="text-label-caps font-label-caps text-secondary uppercase text-[11px] font-bold tracking-wider">
+									{t('customers.form.departmentName')}
+								</span>
+								<input
+									type="text"
+									bind:value={quickDepartmentName}
+									placeholder={t('customers.form.departmentNamePlaceholder')}
+									class="w-full h-10 border border-stone rounded-input px-3 text-body-sm bg-white focus:outline-none focus:border-ink"
+								/>
+							</label>
+							<label class="space-y-1 block">
+								<span class="text-label-caps font-label-caps text-secondary uppercase text-[11px] font-bold tracking-wider">
+									{t('customers.form.departmentCode')}
+								</span>
+								<input
+									type="text"
+									bind:value={quickDepartmentCode}
+									placeholder={t('customers.form.departmentCodePlaceholder')}
+									class="w-full h-10 border border-stone rounded-input px-3 text-body-sm bg-white focus:outline-none focus:border-ink"
+								/>
+							</label>
+							<label class="space-y-1 block">
+								<span class="text-label-caps font-label-caps text-secondary uppercase text-[11px] font-bold tracking-wider">
+									{t('customers.form.costCenter')}
+								</span>
+								<input
+									type="text"
+									bind:value={quickCostCenter}
+									placeholder={t('customers.form.costCenterPlaceholder')}
+									class="w-full h-10 border border-stone rounded-input px-3 text-body-sm bg-white focus:outline-none focus:border-ink"
+								/>
+							</label>
+							<label class="space-y-1 block">
+								<span class="text-label-caps font-label-caps text-secondary uppercase text-[11px] font-bold tracking-wider">
+									{t('customers.form.employeeId')}
+								</span>
+								<input
+									type="text"
+									bind:value={quickEmployeeId}
+									placeholder={t('customers.form.employeeIdPlaceholder')}
+									class="w-full h-10 border border-stone rounded-input px-3 text-body-sm bg-white focus:outline-none focus:border-ink"
+								/>
+							</label>
+						</div>
+					{:else}
+						<label class="space-y-1 block">
+							<span class="text-label-caps font-label-caps text-secondary uppercase text-[11px] font-bold tracking-wider">
+								{t('customers.form.companyName')}
+							</span>
+							<input
+								type="text"
+								bind:value={quickCompanyName}
+								placeholder={t('customers.form.companyNamePlaceholder')}
+								class="w-full h-10 border border-stone rounded-input px-3 text-body-sm bg-white focus:outline-none focus:border-ink"
+							/>
+						</label>
+					{/if}
 
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 						<label class="space-y-1 block sm:col-span-1">

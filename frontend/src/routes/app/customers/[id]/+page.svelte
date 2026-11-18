@@ -2,16 +2,20 @@
 	import { enhance } from '$app/forms';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import DeleteConfirmButton from '$lib/components/DeleteConfirmButton.svelte';
+	import DynamicFieldRenderer from '$lib/components/DynamicFieldRenderer.svelte';
 	import { can, permissions } from '$lib/auth/permissions';
 	import type { PageData, ActionData } from './$types';
 	import type { Device } from '$lib/types/devices';
-	import { createTranslator, formatDate } from '$lib/i18n';
+	import { createTranslator, formatDate, resolveTerminology } from '$lib/i18n';
 	import { fade } from 'svelte/transition';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const t = $derived(createTranslator(data.locale));
+	const terms = $derived(resolveTerminology(data.user?.workspace?.terminology, data.locale));
+	const assetCustomFieldDefs = $derived(data.blueprintConfig?.assetFields ?? []);
 	let customer = $derived(data.customer);
 	let devices = $derived(data.devices ?? []);
+	let locations = $derived((data.locations ?? []).filter((loc) => loc.customerId === customer.id));
 	let serviceHistory = $derived(data.serviceHistory ?? []);
 	let deviceHistories = $derived(data.deviceHistories ?? {});
 	let repeatSummary = $derived(data.repeatSummary);
@@ -23,15 +27,19 @@
 	let showBanModal = $state(false);
 	let showDeviceModal = $state(false);
 	let editingDevice = $state<Device | null>(null);
+	let modalAssetFieldValues = $state<Record<number, string>>({});
 	let copiedPhone = $state(false);
+	let showAddLocation = $state(false);
 
 	function openCreateDevice() {
 		editingDevice = null;
+		modalAssetFieldValues = {};
 		showDeviceModal = true;
 	}
 
 	function openEditDevice(device: Device) {
 		editingDevice = device;
+		modalAssetFieldValues = {};
 		showDeviceModal = true;
 	}
 
@@ -84,25 +92,27 @@
 	<PageHeader
 		items={[
 			{ label: t('common.console'), href: '/app' },
-			{ label: t('nav.customers'), href: '/app/customers' },
+			{ label: terms.requesterPlural, href: '/app/customers' },
 			{ label: customer.fullName }
 		]}
 		title={customer.fullName}
-		subtitle={`ID: C-${customer.id} · ${customer.phoneNumber}`}
+		subtitle={`ID: C-${customer.id}${customer.departmentCode ? ` · ${customer.departmentCode}` : ''}${customer.phoneNumber ? ` · ${customer.phoneNumber}` : ''}`}
 	>
 		{#snippet actions()}
 			<div class="flex items-center gap-2">
-				<!-- WhatsApp Action -->
-				<a
-					href={getWhatsAppUrl(customer.phoneNumber)}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="inline-flex h-9 items-center gap-1.5 rounded-button border border-stone bg-white px-3 text-body-sm font-semibold text-emerald-700 hover:bg-ash transition-colors shadow-2xs"
-					title={t('customers.list.openWhatsApp')}
-				>
-					<span class="material-symbols-outlined text-[17px]">chat</span>
-					<span class="hidden sm:inline">WhatsApp</span>
-				</a>
+				{#if customer.phoneNumber}
+					<!-- WhatsApp Action -->
+					<a
+						href={getWhatsAppUrl(customer.phoneNumber)}
+						target="_blank"
+						rel="noopener noreferrer"
+						class="inline-flex h-9 items-center gap-1.5 rounded-button border border-stone bg-white px-3 text-body-sm font-semibold text-emerald-700 hover:bg-ash transition-colors shadow-2xs"
+						title={t('customers.list.openWhatsApp')}
+					>
+						<span class="material-symbols-outlined text-[17px]">chat</span>
+						<span class="hidden sm:inline">WhatsApp</span>
+					</a>
+				{/if}
 
 				<!-- Edit Profile Action -->
 				{#if canWriteCustomer}
@@ -249,7 +259,109 @@
 							{customer.address || '—'}
 						</p>
 					</div>
+
+					{#if customer.requesterType || customer.companyName || customer.departmentName || customer.costCenter || customer.employeeId}
+						<div class="sm:col-span-2 rounded-xl border border-stone/80 bg-surface-container-low/40 p-3.5 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+							<div>
+								<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block">{t('customers.form.requesterType')}</span>
+								<span class="font-semibold text-ink">{customer.requesterType ? t(`customers.type.${customer.requesterType}`) : t('customers.type.Customer')}</span>
+							</div>
+							{#if customer.companyName}
+								<div>
+									<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block">{t('customers.form.companyName')}</span>
+									<span class="font-semibold text-ink">{customer.companyName}</span>
+								</div>
+							{/if}
+							{#if customer.departmentName || customer.departmentCode}
+								<div>
+									<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block">{t('customers.form.departmentName')}</span>
+									<span class="font-semibold text-ink">{[customer.departmentName, customer.departmentCode].filter(Boolean).join(' · ')}</span>
+								</div>
+							{/if}
+							{#if customer.costCenter}
+								<div>
+									<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block">{t('customers.form.costCenter')}</span>
+									<span class="font-mono font-semibold text-ink">{customer.costCenter}</span>
+								</div>
+							{/if}
+							{#if customer.employeeId}
+								<div>
+									<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block">{t('customers.form.employeeId')}</span>
+									<span class="font-mono font-semibold text-ink">{customer.employeeId}</span>
+								</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
+			</section>
+
+			<!-- Saved Site / Branch Locations -->
+			<section data-bento class="bg-white border border-stone rounded-2xl p-6 shadow-2xs space-y-4">
+				<div class="flex flex-wrap items-center justify-between gap-md border-b border-stone/60 pb-3">
+					<div>
+						<h3 class="font-subheading text-[15px] font-bold text-ink">{t('customers.locations.title')}</h3>
+						<p class="text-xs text-secondary mt-0.5">{t('customers.locations.subtitle')}</p>
+					</div>
+					{#if canWriteCustomer}
+						<button
+							type="button"
+							onclick={() => (showAddLocation = !showAddLocation)}
+							class="inline-flex h-8 items-center gap-1 rounded-button border border-stone bg-white px-3 text-xs font-semibold text-ink hover:bg-ash cursor-pointer"
+						>
+							<span class="material-symbols-outlined text-[16px]">add_location</span>
+							<span>{t('customers.locations.add')}</span>
+						</button>
+					{/if}
+				</div>
+
+				{#if showAddLocation && canWriteCustomer}
+					<form
+						method="POST"
+						action="?/createLocation"
+						use:enhance={() => {
+							return async ({ result, update }) => {
+								await update();
+								if (result.type === 'success') showAddLocation = false;
+							};
+						}}
+						class="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-stone/70 bg-surface p-3.5"
+					>
+						<input name="label" required placeholder={t('customers.locations.namePlaceholder')} class="rounded-input border border-stone bg-white px-3 py-1.5 text-xs" />
+						<input name="address" required placeholder={t('customers.locations.address')} class="rounded-input border border-stone bg-white px-3 py-1.5 text-xs" />
+						<input name="contactName" placeholder={t('customers.locations.contactPerson')} class="rounded-input border border-stone bg-white px-3 py-1.5 text-xs" />
+						<input name="contactPhone" placeholder={t('customers.locations.contactPhone')} class="rounded-input border border-stone bg-white px-3 py-1.5 text-xs" />
+						<div class="sm:col-span-2 flex justify-end gap-2">
+							<button type="button" onclick={() => (showAddLocation = false)} class="rounded-button border border-stone bg-white px-3 py-1 text-xs">{t('common.cancel')}</button>
+							<button type="submit" class="rounded-button bg-ink px-3.5 py-1 text-xs font-semibold text-white">{t('common.save')}</button>
+						</div>
+					</form>
+				{/if}
+
+				{#if locations.length === 0}
+					<p class="text-xs text-secondary italic">{t('customers.locations.empty')}</p>
+				{:else}
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+						{#each locations as loc (loc.id)}
+							<div class="flex items-start justify-between gap-2 rounded-xl border border-stone bg-surface/40 p-3 text-xs">
+								<div class="min-w-0">
+									<div class="font-semibold text-ink">{loc.label}</div>
+									<div class="text-secondary mt-0.5">{loc.address}</div>
+									{#if loc.contactName || loc.contactPhone}
+										<div class="text-[11px] text-secondary mt-0.5 font-mono">{[loc.contactName, loc.contactPhone].filter(Boolean).join(' · ')}</div>
+									{/if}
+								</div>
+								{#if canDeleteCustomer}
+									<form method="POST" action="?/deleteLocation" use:enhance>
+										<input type="hidden" name="locationId" value={loc.id} />
+										<button type="submit" class="text-error hover:bg-error/10 p-1 rounded cursor-pointer" title={t('common.delete')}>
+											<span class="material-symbols-outlined text-[15px]">close</span>
+										</button>
+									</form>
+								{/if}
+							</div>
+						{/each}
+					</div>
+				{/if}
 			</section>
 
 			<!-- Internal Notes Card -->
@@ -263,11 +375,11 @@
 				</p>
 			</section>
 
-			<!-- Registered Devices Section -->
+			<!-- Registered Assets Section -->
 			<section data-bento class="bg-white border border-stone rounded-2xl p-6 shadow-2xs space-y-4">
 				<div class="flex flex-wrap items-center justify-between gap-md border-b border-stone/60 pb-3">
 					<div>
-						<h3 class="font-subheading text-[15px] font-bold text-ink">{t('customers.detail.devices')}</h3>
+						<h3 class="font-subheading text-[15px] font-bold text-ink">{terms.assetPlural}</h3>
 						<p class="text-xs text-secondary mt-0.5">{t('customers.detail.devicesSubtitle')}</p>
 					</div>
 					{#if canWriteDevice}
@@ -277,7 +389,7 @@
 							class="inline-flex h-8 items-center gap-1.5 rounded-button bg-ink px-3 text-xs font-semibold text-white hover:bg-ink/90 active:scale-95 transition-all shadow-xs cursor-pointer"
 						>
 							<span class="material-symbols-outlined text-[16px]">add</span>
-							<span>{t('customers.detail.addDevice')}</span>
+							<span>+ {terms.assetSingular}</span>
 						</button>
 					{/if}
 				</div>
@@ -341,10 +453,20 @@
 
 								<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
 									<div class="flex items-center gap-2">
-										<span class="text-secondary font-label-caps uppercase text-[10.5px] font-bold">{t('customers.detail.serial')}:</span>
+										<span class="text-secondary font-label-caps uppercase text-[10.5px] font-bold">{terms.primaryIdentifierLabel}:</span>
 										<span class="text-ink font-mono">{device.serialNumber || '—'}</span>
 									</div>
 									<div class="flex items-center gap-2">
+										<span class="text-secondary font-label-caps uppercase text-[10.5px] font-bold">{terms.meterLabel}:</span>
+										<span class="text-ink font-mono">{device.meterReading != null ? `${device.meterReading} ${device.meterUnit ?? ''}` : '—'}</span>
+									</div>
+									{#if device.siteLocationLabel}
+										<div class="flex items-center gap-2 sm:col-span-2">
+											<span class="text-secondary font-label-caps uppercase text-[10.5px] font-bold">{t('customers.detail.siteLocation')}:</span>
+											<span class="text-ink">{device.siteLocationLabel}</span>
+										</div>
+									{/if}
+									<div class="flex items-center gap-2 sm:col-span-2">
 										<span class="text-secondary font-label-caps uppercase text-[10.5px] font-bold">{t('customers.detail.notes')}:</span>
 										<span class="text-secondary truncate">{device.notes || '—'}</span>
 									</div>
@@ -612,7 +734,7 @@
 				<div class="grid grid-cols-1 sm:grid-cols-2 gap-sm">
 					<label class="space-y-1 block">
 						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">
-							{t('customers.detail.serialNumber')}
+							{terms.primaryIdentifierLabel}
 						</span>
 						<input
 							name="serialNumber"
@@ -623,7 +745,7 @@
 					</label>
 					<label class="space-y-1 block">
 						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">
-							{t('customers.detail.identifierLabel')}
+							{terms.secondaryIdentifierLabel}
 						</span>
 						<input
 							name="identifierLabel"
@@ -633,6 +755,56 @@
 						/>
 					</label>
 				</div>
+
+				<div class="grid grid-cols-1 sm:grid-cols-3 gap-sm">
+					<label class="space-y-1 block">
+						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">
+							{terms.meterLabel}
+						</span>
+						<input
+							type="number"
+							step="any"
+							name="meterReading"
+							value={editingDevice?.meterReading ?? ''}
+							placeholder="0"
+							class="w-full rounded-input border border-stone bg-white p-2 text-body-sm text-ink font-mono focus:border-ink focus:outline-none"
+						/>
+					</label>
+					<label class="space-y-1 block">
+						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">
+							{t('customers.detail.meterUnit')}
+						</span>
+						<input
+							type="text"
+							name="meterUnit"
+							value={editingDevice?.meterUnit ?? ''}
+							placeholder="km / hours"
+							class="w-full rounded-input border border-stone bg-white p-2 text-body-sm text-ink focus:border-ink focus:outline-none"
+						/>
+					</label>
+					<label class="space-y-1 block">
+						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">
+							{t('customers.detail.siteLocation')}
+						</span>
+						<select
+							name="siteLocationId"
+							value={editingDevice?.siteLocationId ? String(editingDevice.siteLocationId) : ''}
+							class="w-full rounded-input border border-stone bg-white p-2 text-body-sm text-ink focus:border-ink focus:outline-none"
+						>
+							<option value="">—</option>
+							{#each locations as loc (loc.id)}
+								<option value={String(loc.id)}>{loc.label}</option>
+							{/each}
+						</select>
+					</label>
+				</div>
+
+				{#if assetCustomFieldDefs.length > 0}
+					<div class="pt-2 border-t border-stone/70 space-y-2">
+						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('fieldService.customFieldsSection')}</span>
+						<DynamicFieldRenderer fields={assetCustomFieldDefs} bind:values={modalAssetFieldValues} locale={data.locale} namePrefix="assetField" />
+					</div>
+				{/if}
 
 				<label class="space-y-1 block">
 					<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">
@@ -658,7 +830,7 @@
 						type="submit"
 						class="px-4 py-2 rounded-button bg-ink text-white font-medium text-body-sm hover:bg-ink/90 active:scale-95 transition-all shadow-xs cursor-pointer"
 					>
-						{editingDevice ? t('customers.detail.saveDevice') : t('customers.detail.createDevice')}
+						{editingDevice ? t('customers.detail.saveDevice') : `+ ${terms.assetSingular}`}
 					</button>
 				</div>
 			</form>

@@ -30,7 +30,8 @@ public static class OrganizationWorkspaceEndpoints
         string? TimeZone,
         string? CurrencyCode,
         TerminologyConfigDto? Terminology,
-        bool SeedSampleData = false);
+        bool SeedSampleData = false,
+        WorkspaceFeatureConfig? FeatureConfig = null);
 
     public sealed record CompleteSetupRequest(
         string OrganizationName,
@@ -47,7 +48,8 @@ public static class OrganizationWorkspaceEndpoints
         TerminologyConfigDto? Terminology,
         bool ReplaceStatuses = false,
         bool ReplaceFieldsAndChecklists = false,
-        bool SeedSampleData = false);
+        bool SeedSampleData = false,
+        WorkspaceFeatureConfig? FeatureConfig = null);
 
     public sealed record WorkspaceKpiDto(
         int WorkspaceId,
@@ -167,6 +169,8 @@ public static class OrganizationWorkspaceEndpoints
             OperatingMode = request.OperatingMode,
             IndustryBlueprintKey = blueprint.Key,
             TerminologyConfig = IndustryBlueprintCatalog.SerializeTerminology(request.Terminology ?? blueprint.Terminology),
+            FeatureConfig = IndustryBlueprintCatalog.SerializeFeatureConfig(
+                request.FeatureConfig ?? IndustryBlueprintCatalog.GetDefaultFeatureConfig(blueprint.Key, request.OperatingMode)),
             DefaultLocale = string.IsNullOrWhiteSpace(request.DefaultLocale) ? "en" : request.DefaultLocale.Trim(),
             TimeZone = string.IsNullOrWhiteSpace(request.TimeZone) ? currentWorkspace.TimeZone : request.TimeZone.Trim(),
             CurrencyCode = string.IsNullOrWhiteSpace(request.CurrencyCode) ? currentWorkspace.CurrencyCode : request.CurrencyCode.Trim().ToUpperInvariant(),
@@ -205,6 +209,7 @@ public static class OrganizationWorkspaceEndpoints
             replaceExistingStatuses: true,
             replaceExistingFieldsAndChecklists: true,
             customTerminology: request.Terminology,
+            customFeatureConfig: request.FeatureConfig,
             cancellationToken: cancellationToken);
 
         if (request.SeedSampleData)
@@ -287,6 +292,7 @@ public static class OrganizationWorkspaceEndpoints
             replaceExistingStatuses: request.ReplaceStatuses,
             replaceExistingFieldsAndChecklists: request.ReplaceFieldsAndChecklists,
             customTerminology: request.Terminology,
+            customFeatureConfig: request.FeatureConfig,
             cancellationToken: cancellationToken);
 
         // Sync key workspace profile settings in app_settings

@@ -52,7 +52,10 @@ public enum InventoryItemType
     SecondhandPart,
     SecondhandPcBuild,
     SecondhandLaptop,
-    ServiceConsumable
+    ServiceConsumable,
+    RefurbishedUnit,
+    Equipment,
+    ToolOrSupply
 }
 
 public enum InventoryCondition

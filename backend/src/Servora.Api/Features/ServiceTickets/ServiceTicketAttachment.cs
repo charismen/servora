@@ -34,7 +34,21 @@ public enum ServiceTicketAttachmentType
     Accessories,
     Damage,
     Receipt,
-    Other
+    Other,
+    FrontView,
+    BackView,
+    ExteriorWalkaround,
+    Odometer,
+    EngineBay,
+    IndoorUnit,
+    OutdoorUnit,
+    GaugeReading,
+    SiteLocation,
+    EquipmentTag,
+    SafetyCheck,
+    SerialOrTag,
+    BeforeRepair,
+    AfterRepair
 }
 
 public class ServiceTicketAttachmentConfiguration : IEntityTypeConfiguration<ServiceTicketAttachment>

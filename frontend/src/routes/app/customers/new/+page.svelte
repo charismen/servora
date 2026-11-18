@@ -1,12 +1,20 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { createTranslator } from '$lib/i18n';
+	import { createTranslator, resolveTerminology } from '$lib/i18n';
 	import { handlePhoneInput, handlePhonePaste } from '$lib/utils/phone';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const t = $derived(createTranslator(data.locale));
+	const terms = $derived(resolveTerminology(data.user?.workspace?.terminology, data.locale));
 	let values = $derived(form?.values);
+	let requesterType = $state<string>(
+		untrack(() =>
+			values?.requesterType ??
+			(data.user?.workspace?.operatingMode === 'InternalMaintenance' ? 'Department' : 'Customer')
+		)
+	);
 
 	let isSaving = $state(false);
 	let formElement = $state<HTMLFormElement | null>(null);
@@ -27,10 +35,10 @@
 	<PageHeader
 		items={[
 			{ label: t('common.console'), href: '/app' },
-			{ label: t('nav.customers'), href: '/app/customers' },
-			{ label: t('customers.form.newCustomer') }
+			{ label: terms.requesterPlural, href: '/app/customers' },
+			{ label: `+ ${terms.requesterSingular}` }
 		]}
-		title={t('customers.form.registerTitle')}
+		title={`${t('customers.form.newCustomer')} (${terms.requesterSingular})`}
 		subtitle={t('customers.form.registerSubtitle')}
 	/>
 
@@ -54,6 +62,23 @@
 					</div>
 
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-md">
+						<div class="space-y-1 sm:col-span-2">
+							<label for="requesterType" class="block font-label-caps text-[11px] font-bold uppercase tracking-wider text-secondary">
+								{t('customers.form.requesterType')}
+							</label>
+							<select
+								id="requesterType"
+								name="requesterType"
+								bind:value={requesterType}
+								class="w-full rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none"
+							>
+								<option value="Customer">{t('customers.type.Customer')}</option>
+								<option value="Department">{t('customers.type.Department')}</option>
+								<option value="InternalEmployee">{t('customers.type.InternalEmployee')}</option>
+								<option value="Branch">{t('customers.type.Branch')}</option>
+							</select>
+						</div>
+
 						<!-- Full Name -->
 						<div class="space-y-1 sm:col-span-2">
 							<label for="fullName" class="block font-label-caps text-[11px] font-bold uppercase tracking-wider text-secondary">
@@ -79,11 +104,12 @@
 						<div class="space-y-1 sm:col-span-2">
 							<div class="flex items-center justify-between">
 								<label for="phoneNumber" class="block font-label-caps text-[11px] font-bold uppercase tracking-wider text-secondary">
-									{t('customers.form.phoneNumber')} <span class="text-error">*</span>
+									{t('customers.form.phoneNumber')}
+									{#if requesterType === 'Customer'}<span class="text-error">*</span>{/if}
 								</label>
 								<span class="text-[11px] text-emerald-700 font-medium inline-flex items-center gap-1">
 									<span class="material-symbols-outlined text-[13px]">chat</span>
-									WhatsApp Ready
+									{requesterType === 'Customer' ? t('customers.form.phoneHelp') : t('customers.form.phoneOptionalInternal')}
 								</span>
 							</div>
 							<div class="relative">
@@ -91,7 +117,7 @@
 									id="phoneNumber"
 									name="phoneNumber"
 									value={values?.phoneNumber ?? ''}
-									required
+									required={requesterType === 'Customer'}
 									type="tel"
 									oninput={handlePhoneInput}
 									onpaste={handlePhonePaste}
@@ -102,10 +128,76 @@
 									phone
 								</span>
 							</div>
-							<p class="text-[11.5px] text-secondary mt-1">
-								{t('customers.form.phoneHelp')}
-							</p>
 						</div>
+
+						{#if requesterType === 'Customer'}
+							<div class="space-y-1 sm:col-span-2">
+								<label for="companyName" class="block font-label-caps text-[11px] font-bold uppercase tracking-wider text-secondary">
+									{t('customers.form.companyName')}
+								</label>
+								<input
+									id="companyName"
+									name="companyName"
+									value={values?.companyName ?? ''}
+									type="text"
+									class="w-full rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none"
+									placeholder={t('customers.form.companyNamePlaceholder')}
+								/>
+							</div>
+						{:else}
+							<div class="space-y-1">
+								<label for="departmentName" class="block font-label-caps text-[11px] font-bold uppercase tracking-wider text-secondary">
+									{t('customers.form.departmentName')}
+								</label>
+								<input
+									id="departmentName"
+									name="departmentName"
+									value={values?.departmentName ?? ''}
+									type="text"
+									class="w-full rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none"
+									placeholder={t('customers.form.departmentNamePlaceholder')}
+								/>
+							</div>
+							<div class="space-y-1">
+								<label for="departmentCode" class="block font-label-caps text-[11px] font-bold uppercase tracking-wider text-secondary">
+									{t('customers.form.departmentCode')}
+								</label>
+								<input
+									id="departmentCode"
+									name="departmentCode"
+									value={values?.departmentCode ?? ''}
+									type="text"
+									class="w-full rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none"
+									placeholder={t('customers.form.departmentCodePlaceholder')}
+								/>
+							</div>
+							<div class="space-y-1">
+								<label for="costCenter" class="block font-label-caps text-[11px] font-bold uppercase tracking-wider text-secondary">
+									{t('customers.form.costCenter')}
+								</label>
+								<input
+									id="costCenter"
+									name="costCenter"
+									value={values?.costCenter ?? ''}
+									type="text"
+									class="w-full rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none"
+									placeholder={t('customers.form.costCenterPlaceholder')}
+								/>
+							</div>
+							<div class="space-y-1">
+								<label for="employeeId" class="block font-label-caps text-[11px] font-bold uppercase tracking-wider text-secondary">
+									{t('customers.form.employeeId')}
+								</label>
+								<input
+									id="employeeId"
+									name="employeeId"
+									value={values?.employeeId ?? ''}
+									type="text"
+									class="w-full rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none"
+									placeholder={t('customers.form.employeeIdPlaceholder')}
+								/>
+							</div>
+						{/if}
 
 						<!-- Email Address -->
 						<div class="space-y-1 sm:col-span-2">

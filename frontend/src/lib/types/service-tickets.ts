@@ -1,4 +1,4 @@
-import type { TerminologyConfig } from './auth';
+import type { TerminologyConfig, WorkspaceFeatureConfig } from './auth';
 import type { FieldValueDto, TicketInspectionDto } from './blueprints';
 import type { ServiceLocationType } from './maintenance';
 
@@ -322,4 +322,6 @@ export interface TicketReceipt {
 	isInternalWorkOrder?: boolean;
 	printCustomFields?: FieldValueDto[];
 	terminology?: TerminologyConfig | null;
+	featureConfig?: WorkspaceFeatureConfig | null;
+	printInspections?: TicketInspectionDto[];
 }

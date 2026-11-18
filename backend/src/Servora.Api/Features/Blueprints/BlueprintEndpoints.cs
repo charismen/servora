@@ -71,19 +71,22 @@ public static class BlueprintEndpoints
         string IndustryBlueprintKey,
         bool SetupCompleted,
         TerminologyConfigDto Terminology,
+        WorkspaceFeatureConfig FeatureConfig,
         IReadOnlyList<CustomFieldDefinitionDto> AssetFields,
         IReadOnlyList<CustomFieldDefinitionDto> TicketFields,
         IReadOnlyList<InspectionChecklistTemplateDto> InspectionChecklists);
 
     public sealed record UpdateTerminologyRequest(
         OperatingMode OperatingMode,
-        TerminologyConfigDto Terminology);
+        TerminologyConfigDto Terminology,
+        WorkspaceFeatureConfig? FeatureConfig = null);
 
     public sealed record ApplyBlueprintRequest(
         string BlueprintKey,
         bool ReplaceStatuses = false,
         bool ReplaceFieldsAndChecklists = true,
-        TerminologyConfigDto? Terminology = null);
+        TerminologyConfigDto? Terminology = null,
+        WorkspaceFeatureConfig? FeatureConfig = null);
 
     public sealed record FieldValueDto(
         int FieldDefinitionId,
@@ -240,6 +243,7 @@ public static class BlueprintEndpoints
             workspace.IndustryBlueprintKey,
             workspace.SetupCompleted,
             IndustryBlueprintCatalog.DeserializeTerminology(workspace.TerminologyConfig, workspace.IndustryBlueprintKey),
+            IndustryBlueprintCatalog.DeserializeFeatureConfig(workspace.FeatureConfig, workspace.IndustryBlueprintKey, workspace.OperatingMode),
             mappedFields.Where(f => f.Scope == CustomFieldScope.Asset.ToString()).ToList(),
             mappedFields.Where(f => f.Scope == CustomFieldScope.Ticket.ToString()).ToList(),
             checklists));
@@ -258,20 +262,28 @@ public static class BlueprintEndpoints
 
         workspace.OperatingMode = request.OperatingMode;
         workspace.TerminologyConfig = IndustryBlueprintCatalog.SerializeTerminology(request.Terminology);
+        if (request.FeatureConfig is not null)
+        {
+            workspace.FeatureConfig = IndustryBlueprintCatalog.SerializeFeatureConfig(request.FeatureConfig);
+        }
         await context.SaveChangesAsync(cancellationToken);
+
+        var resolvedFeatureConfig = IndustryBlueprintCatalog.DeserializeFeatureConfig(
+            workspace.FeatureConfig, workspace.IndustryBlueprintKey, workspace.OperatingMode);
 
         await activityLogger.LogAsync(
             "Workspace",
             workspace.Id,
             "TerminologyUpdated",
-            $"Updated operating mode ({workspace.OperatingMode}) and terminology labels.",
+            $"Updated operating mode ({workspace.OperatingMode}), terminology labels, and workspace feature config.",
             cancellationToken: cancellationToken);
 
         return Results.Ok(new
         {
             workspace.Id,
             OperatingMode = workspace.OperatingMode.ToString(),
-            Terminology = request.Terminology
+            Terminology = request.Terminology,
+            FeatureConfig = resolvedFeatureConfig
         });
     }
 
@@ -293,6 +305,7 @@ public static class BlueprintEndpoints
             request.ReplaceStatuses,
             request.ReplaceFieldsAndChecklists,
             request.Terminology,
+            request.FeatureConfig,
             cancellationToken);
 
         await activityLogger.LogAsync(

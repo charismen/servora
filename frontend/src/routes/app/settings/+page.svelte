@@ -324,6 +324,11 @@
 						<Dropdown name="currencyCode" value={settings.currencyCode ?? 'IDR'} options={[
 							{ value: 'IDR', label: t('settings.currencyIdr') },
 							{ value: 'USD', label: t('settings.currencyUsd') },
+							{ value: 'SGD', label: t('settings.currencySgd') },
+							{ value: 'EUR', label: t('settings.currencyEur') },
+							{ value: 'MYR', label: t('settings.currencyMyr') },
+							{ value: 'GBP', label: t('settings.currencyGbp') },
+							{ value: 'AUD', label: t('settings.currencyAud') },
 						]} />
 					</div>
 
@@ -419,28 +424,28 @@
 					<input class="mt-0.5 rounded border-stone text-primary focus:ring-primary" name="requirePhotoEvidenceOnIntake" type="checkbox" checked={settings.requirePhotoEvidenceOnIntake ?? false} />
 					<div>
 						<span class="font-semibold text-primary block">{t('settings.requirePhotoEvidenceOnIntake')}</span>
-						<span class="text-caption text-secondary block mt-0.5">Enforce camera intake condition documentation before issuing claim tickets.</span>
+						<span class="text-caption text-secondary block mt-0.5">{t('settings.ruleRequirePhotoHint')}</span>
 					</div>
 				</label>
 				<label class="flex items-start gap-sm rounded-xl border border-stone bg-ash/30 p-md text-body-sm text-secondary hover:bg-ash/60 transition-colors cursor-pointer select-none">
 					<input class="mt-0.5 rounded border-stone text-primary focus:ring-primary" name="showPhotoEvidenceOnPublicTracking" type="checkbox" checked={settings.showPhotoEvidenceOnPublicTracking ?? false} />
 					<div>
 						<span class="font-semibold text-primary block">{t('settings.showPhotoEvidenceOnPublicTracking')}</span>
-						<span class="text-caption text-secondary block mt-0.5">Allow device owners to inspect photo proof on their public status tracking URL.</span>
+						<span class="text-caption text-secondary block mt-0.5">{t('settings.rulePublicPhotoHint')}</span>
 					</div>
 				</label>
 				<label class="flex items-start gap-sm rounded-xl border border-stone bg-ash/30 p-md text-body-sm text-secondary hover:bg-ash/60 transition-colors cursor-pointer select-none">
 					<input class="mt-0.5 rounded border-stone text-primary focus:ring-primary" name="requireApprovalEstimate" type="checkbox" checked={settings.requireApprovalEstimate ?? false} />
 					<div>
 						<span class="font-semibold text-primary block">{t('settings.requireApprovalEstimate')}</span>
-						<span class="text-caption text-secondary block mt-0.5">Require an estimated price before triggering customer approval requests.</span>
+						<span class="text-caption text-secondary block mt-0.5">{t('settings.ruleApprovalEstimateHint')}</span>
 					</div>
 				</label>
 				<label class="flex items-start gap-sm rounded-xl border border-stone bg-ash/30 p-md text-body-sm text-secondary hover:bg-ash/60 transition-colors cursor-pointer select-none">
 					<input class="mt-0.5 rounded border-stone text-primary focus:ring-primary" name="allowUnpaidPickupOverride" type="checkbox" checked={settings.allowUnpaidPickupOverride ?? true} />
 					<div>
 						<span class="font-semibold text-primary block">{t('settings.allowUnpaidPickupOverride')}</span>
-						<span class="text-caption text-secondary block mt-0.5">Permit managers to authorize device release before full invoice settlement.</span>
+						<span class="text-caption text-secondary block mt-0.5">{t('settings.ruleUnpaidPickupHint')}</span>
 					</div>
 				</label>
 			</div>

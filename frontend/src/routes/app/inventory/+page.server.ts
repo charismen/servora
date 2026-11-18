@@ -169,7 +169,11 @@ async function saveItem(form: FormData, fetch: typeof globalThis.fetch, token?: 
 		unit: text(form.get('unit'), 'pcs'),
 		costPrice,
 		salePrice: number(form.get('salePrice')),
-		itemType: enumText(form.get('itemType'), ['SparePart', 'Accessory', 'SecondhandPart', 'SecondhandPcBuild', 'SecondhandLaptop', 'ServiceConsumable'], 'SparePart'),
+		itemType: enumText(
+			form.get('itemType'),
+			['SparePart', 'Accessory', 'ServiceConsumable', 'Equipment', 'ToolOrSupply', 'RefurbishedUnit', 'SecondhandPart', 'SecondhandPcBuild', 'SecondhandLaptop'],
+			'SparePart'
+		),
 		condition: enumText(form.get('condition'), ['New', 'Used', 'Refurbished', 'ForParts'], 'New'),
 		purchasePrice: number(form.get('purchasePrice'), costPrice),
 		shippingCost: number(form.get('shippingCost')),

@@ -8,7 +8,7 @@ export type ShopProfileSettings = {
 	ticketDateFormat: string;
 	ticketStartNumber: number;
 	ticketMinDigits: number;
-	currencyCode: 'IDR' | 'USD';
+	currencyCode: 'IDR' | 'USD' | 'SGD' | 'EUR' | 'MYR' | 'GBP' | 'AUD' | string;
 	receiptFooter: string;
 	inventoryDefaultTaxPercent: number;
 	inventoryRoundingIncrement: number;

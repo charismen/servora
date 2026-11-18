@@ -1,4 +1,4 @@
-import type { OperatingMode, TerminologyConfig } from './auth';
+import type { OperatingMode, TerminologyConfig, WorkspaceFeatureConfig } from './auth';
 
 export type CustomFieldScope = 'Asset' | 'Ticket';
 export type CustomFieldType = 'Text' | 'Number' | 'Select' | 'Boolean' | 'Date' | 'Multiline';
@@ -58,6 +58,7 @@ export type IndustryBlueprintDefinition = {
 	defaultTicketPrefix: string;
 	defaultAssetCategory: string;
 	terminology: TerminologyConfig;
+	featureConfig: WorkspaceFeatureConfig;
 	statuses: BlueprintStatusSeed[];
 	fields: BlueprintFieldSeed[];
 	checklists: BlueprintChecklistSeed[];
@@ -100,6 +101,7 @@ export type WorkspaceBlueprintConfig = {
 	industryBlueprintKey: string;
 	setupCompleted: boolean;
 	terminology: TerminologyConfig;
+	featureConfig: WorkspaceFeatureConfig;
 	assetFields: CustomFieldDefinition[];
 	ticketFields: CustomFieldDefinition[];
 	inspectionChecklists: InspectionChecklistTemplate[];

@@ -25,6 +25,7 @@ public class Shop : IAuditableEntity
     public OperatingMode OperatingMode { get; set; } = OperatingMode.Commercial;
     public string IndustryBlueprintKey { get; set; } = "it_computer";
     public string? TerminologyConfig { get; set; }
+    public string? FeatureConfig { get; set; }
     public string DefaultLocale { get; set; } = "en";
     public string TimeZone { get; set; } = "Asia/Jakarta";
     public string CurrencyCode { get; set; } = "IDR";
@@ -51,6 +52,7 @@ public class ShopConfiguration : IEntityTypeConfiguration<Shop>
         builder.Property(shop => shop.OperatingMode).HasColumnName("operating_mode").HasConversion<string>().IsRequired().HasMaxLength(40).HasDefaultValue(OperatingMode.Commercial);
         builder.Property(shop => shop.IndustryBlueprintKey).HasColumnName("industry_blueprint_key").IsRequired().HasMaxLength(60).HasDefaultValue("it_computer");
         builder.Property(shop => shop.TerminologyConfig).HasColumnName("terminology_config").HasColumnType("text");
+        builder.Property(shop => shop.FeatureConfig).HasColumnName("feature_config").HasColumnType("text");
         builder.Property(shop => shop.DefaultLocale).HasColumnName("default_locale").IsRequired().HasMaxLength(12);
         builder.Property(shop => shop.TimeZone).HasColumnName("timezone").IsRequired().HasMaxLength(80).HasDefaultValue("Asia/Jakarta");
         builder.Property(shop => shop.CurrencyCode).HasColumnName("currency_code").IsRequired().HasMaxLength(10).HasDefaultValue("IDR");

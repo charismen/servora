@@ -3,6 +3,8 @@ import { env } from '$env/dynamic/public';
 import { serverApiRequest, ServerApiError } from '$lib/server/api';
 import type { Actions, PageServerLoad } from './$types';
 import type { InventoryItem, TicketInventoryUsage } from '$lib/types/inventory';
+import type { Device } from '$lib/types/devices';
+import type { CustomerLocation } from '$lib/types/maintenance';
 import type { GeneratedWhatsAppMessage, TicketApproval, TicketDetail, TicketHistory, TicketPayment, TicketWorkItem, WorkItemType } from '$lib/types/service-tickets';
 import type { ServiceTemplate, TicketChecklistItem } from '$lib/types/service-templates';
 import type { StaffUser } from '$lib/types/shop-users';
@@ -11,7 +13,7 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 	const token = cookies.get('servora_session');
 	const id = Number(params.id);
 
-	const [ticket, history, approvals, workItems, payment, inventoryItems, inventoryUsages, staff, serviceTemplates, checklistItems] = await Promise.all([
+	const [ticket, history, approvals, workItems, payment, inventoryItems, inventoryUsages, staff, serviceTemplates, checklistItems, locations, allAssets] = await Promise.all([
 		serverApiRequest<TicketDetail>(fetch, `/service-tickets/${id}`, { token }),
 		serverApiRequest<TicketHistory[]>(fetch, `/service-tickets/${id}/history`, { token }),
 		serverApiRequest<TicketApproval[]>(fetch, `/service-tickets/${id}/approvals`, { token }),
@@ -21,31 +23,131 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 		serverApiRequest<TicketInventoryUsage[]>(fetch, `/service-tickets/${id}/inventory`, { token }).catch(() => []),
 		serverApiRequest<StaffUser[]>(fetch, '/shop-users/staff', { token }).catch(() => []),
 		serverApiRequest<ServiceTemplate[]>(fetch, '/service-templates', { token }).catch(() => []),
-		serverApiRequest<TicketChecklistItem[]>(fetch, `/service-tickets/${id}/checklist`, { token }).catch(() => [])
+		serverApiRequest<TicketChecklistItem[]>(fetch, `/service-tickets/${id}/checklist`, { token }).catch(() => []),
+		serverApiRequest<CustomerLocation[]>(fetch, '/locations', { token }).catch(() => []),
+		serverApiRequest<Device[]>(fetch, '/service-assets', { token }).catch(() => [])
 	]);
 
-	return { ticket, history, approvals, workItems, payment, inventoryItems, inventoryUsages, staff, serviceTemplates, checklistItems, apiBaseUrl: env.PUBLIC_API_BASE_URL ?? 'http://localhost:5051/api/v1' };
+	return {
+		ticket,
+		history,
+		approvals,
+		workItems,
+		payment,
+		inventoryItems,
+		inventoryUsages,
+		staff,
+		serviceTemplates,
+		checklistItems,
+		locations,
+		allAssets,
+		apiBaseUrl: env.PUBLIC_API_BASE_URL ?? 'http://localhost:5051/api/v1'
+	};
 };
 
 export const actions: Actions = {
 	update: async ({ request, fetch, cookies, params }) => {
-		return submit(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}`, 'PUT', await request.formData(), {
-			complaint: 'complaint',
-			initialDiagnosis: 'initialDiagnosis',
-			physicalConditionNotes: 'physicalConditionNotes',
-			accessorySummary: 'accessorySummary',
-			photoNotes: 'photoNotes',
-			securityPasscode: 'securityPasscode',
-			securityPattern: 'securityPattern',
-			preRepairChecklist: 'preRepairChecklist',
-			diagnosis: 'diagnosis',
-			repairNotes: 'repairNotes',
-			warrantyUntil: 'warrantyUntil',
-			warrantyTerms: 'warrantyTerms',
-			priority: 'priority',
-			createdAt: 'createdAt',
-			updatedAt: 'updatedAt'
-		}, { action: 'update', messageKey: 'tickets.detail.actionSaved' });
+		const form = await request.formData();
+		const scheduledStart = nullable(form.get('scheduledVisitStart'));
+		const scheduledEnd = nullable(form.get('scheduledVisitEnd'));
+		const slaDue = nullable(form.get('slaDueAt'));
+		const siteLoc = nullable(form.get('siteLocationId'));
+
+		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}`, 'PUT', {
+			complaint: String(form.get('complaint') ?? ''),
+			initialDiagnosis: nullable(form.get('initialDiagnosis')),
+			physicalConditionNotes: nullable(form.get('physicalConditionNotes')),
+			accessorySummary: nullable(form.get('accessorySummary')),
+			photoNotes: nullable(form.get('photoNotes')),
+			securityPasscode: nullable(form.get('securityPasscode')),
+			securityPattern: nullable(form.get('securityPattern')),
+			preRepairChecklist: nullable(form.get('preRepairChecklist')),
+			diagnosis: nullable(form.get('diagnosis')),
+			repairNotes: nullable(form.get('repairNotes')),
+			warrantyUntil: nullable(form.get('warrantyUntil')) ? `${nullable(form.get('warrantyUntil'))}T23:59:59Z` : null,
+			warrantyTerms: nullable(form.get('warrantyTerms')),
+			priority: nullable(form.get('priority')),
+			createdAt: nullable(form.get('createdAt')) ? `${nullable(form.get('createdAt'))}T00:00:00Z` : null,
+			updatedAt: nullable(form.get('updatedAt')),
+			serviceLocationType: nullable(form.get('serviceLocationType')),
+			siteLocationId: siteLoc ? Number(siteLoc) : null,
+			clearSiteLocationId: form.has('serviceLocationType') && !siteLoc,
+			siteAddressSnapshot: nullable(form.get('siteAddressSnapshot')),
+			scheduledVisitStart: scheduledStart ? new Date(scheduledStart).toISOString() : null,
+			scheduledVisitEnd: scheduledEnd ? new Date(scheduledEnd).toISOString() : null,
+			clearFieldServiceSchedule: form.has('serviceLocationType') && !scheduledStart && !scheduledEnd,
+			slaDueAt: slaDue ? new Date(slaDue).toISOString() : null,
+			clearSlaDueAt: form.has('serviceLocationType') && !slaDue,
+			departmentCode: form.has('departmentCode') ? String(form.get('departmentCode') ?? '') : null,
+			costCenter: form.has('costCenter') ? String(form.get('costCenter') ?? '') : null
+		}, { ok: true, action: 'update', messageKey: 'tickets.detail.actionSaved' });
+	},
+	updateCustomFields: async ({ request, fetch, cookies, params }) => {
+		const token = cookies.get('servora_session');
+		const form = await request.formData();
+		const assetId = Number(form.get('assetId') || 0);
+		const assetValues = extractFieldInputs(form, 'assetField_');
+		const ticketValues = extractFieldInputs(form, 'ticketField_');
+		try {
+			if (assetId > 0 && form.has('hasAssetCustomFields')) {
+				await serverApiRequest(fetch, `/service-assets/${assetId}/custom-fields`, {
+					method: 'PUT',
+					token,
+					body: { values: assetValues }
+				});
+			}
+			if (form.has('hasTicketCustomFields')) {
+				await serverApiRequest(fetch, `/service-tickets/${params.id}/custom-fields`, {
+					method: 'PUT',
+					token,
+					body: { values: ticketValues }
+				});
+			}
+			return { success: true, ok: true, action: 'updateCustomFields', messageKey: 'tickets.detail.savedSuccess' };
+		} catch (error) {
+			if (error instanceof ServerApiError) {
+				return fail(error.status, { ok: false, success: false, action: 'updateCustomFields', message: error.message, variant: 'error' });
+			}
+			throw error;
+		}
+	},
+	updateInspections: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		let items: unknown[] = [];
+		const raw = nullable(form.get('inspectionsJson'));
+		if (raw) {
+			try {
+				const parsed = JSON.parse(raw);
+				if (Array.isArray(parsed)) items = parsed;
+			} catch {
+				items = [];
+			}
+		}
+		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}/inspections`, 'PUT', { items }, {
+			ok: true,
+			action: 'updateInspections',
+			messageKey: 'tickets.detail.savedSuccess'
+		});
+	},
+	linkAsset: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const assetId = Number(form.get('assetId'));
+		if (!Number.isFinite(assetId) || assetId <= 0) {
+			return fail(400, { success: false, messageKey: 'tickets.create.deviceRequired', action: 'linkAsset', variant: 'error' });
+		}
+		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}/assets`, 'POST', {
+			assetId,
+			notes: nullable(form.get('notes'))
+		}, { ok: true, action: 'linkAsset', messageKey: 'tickets.detail.savedSuccess' });
+	},
+	unlinkAsset: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const assetId = Number(form.get('assetId'));
+		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}/assets/${assetId}`, 'DELETE', {}, {
+			ok: true,
+			action: 'unlinkAsset',
+			messageKey: 'tickets.detail.savedSuccess'
+		});
 	},
 	changeStatus: async ({ request, fetch, cookies, params }) => {
 		const form = await request.formData();
@@ -413,21 +515,6 @@ async function inventoryAction(request: Request, fetcher: typeof fetch, token: s
 	}, { ok: true, action: 'inventory', messageKey });
 }
 
-async function submit(
-	fetcher: typeof fetch,
-	token: string | undefined,
-	path: string,
-	method: 'POST' | 'PUT',
-	form: FormData,
-	fields: Record<string, string>,
-	success: Record<string, unknown> = {}
-) {
-	const body = Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, nullable(form.get(field))]));
-	if (typeof body.warrantyUntil === 'string') body.warrantyUntil = `${body.warrantyUntil}T23:59:59Z`;
-	if (typeof body.createdAt === 'string') body.createdAt = `${body.createdAt}T00:00:00Z`;
-	return submitJson(fetcher, token, path, method, body, success);
-}
-
 async function submitJson(fetcher: typeof fetch, token: string | undefined, path: string, method: 'POST' | 'PUT' | 'DELETE', body: unknown, success: Record<string, unknown> = {}) {
 	try {
 		await serverApiRequest(fetcher, path, { method, token, body });
@@ -450,6 +537,18 @@ async function submitJson(fetcher: typeof fetch, token: string | undefined, path
 function nullable(value: FormDataEntryValue | null) {
 	const text = String(value ?? '').trim();
 	return text.length > 0 ? text : null;
+}
+
+function extractFieldInputs(form: FormData, prefix: string) {
+	const values: { fieldDefinitionId: number; value: string | null }[] = [];
+	for (const [key, val] of form.entries()) {
+		if (!key.startsWith(prefix)) continue;
+		const id = Number(key.slice(prefix.length));
+		if (Number.isInteger(id) && id > 0) {
+			values.push({ fieldDefinitionId: id, value: nullable(val) });
+		}
+	}
+	return values;
 }
 
 function parseAmount(value: FormDataEntryValue | null, fallback = 0): number {

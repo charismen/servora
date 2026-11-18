@@ -70,6 +70,41 @@ public class ServoraMultiIndustryTests : IClassFixture<IntegrationTestWebAppFact
         var configJson = await configResp.Content.ReadFromJsonAsync<JsonElement>();
         configJson.GetProperty("industryBlueprintKey").GetString().Should().Be("hvac_ac");
         configJson.GetProperty("assetFields").GetArrayLength().Should().BeGreaterThan(0);
+        configJson.GetProperty("featureConfig").GetProperty("showSecurityCredentials").GetBoolean().Should().BeFalse();
+        configJson.GetProperty("featureConfig").GetProperty("defaultServiceLocationType").GetString().Should().Be("OnSite");
+
+        // Customize feature config for this workspace via PUT /blueprints/terminology
+        using var updateFeatReq = new HttpRequestMessage(HttpMethod.Put, "/api/v1/blueprints/terminology")
+        {
+            Content = JsonContent.Create(new
+            {
+                operatingMode = "Hybrid",
+                terminology = configJson.GetProperty("terminology"),
+                featureConfig = new
+                {
+                    showSecurityCredentials = false,
+                    securityCredentialMode = "None",
+                    showAccessories = true,
+                    quickAccessoriesEn = new[] { "Remote Control", "Circuit Breaker" },
+                    quickAccessoriesId = new[] { "Remote AC", "MCB" },
+                    showPreRepairChecklist = true,
+                    showPhysicalConditionNotes = true,
+                    showWarrantySection = true,
+                    showBillingAndPayments = true,
+                    showCustomerApprovals = false,
+                    enableFieldService = true,
+                    defaultServiceLocationType = "OnSite",
+                    enablePreventiveMaintenance = true,
+                    attachmentTypes = new[] { "IndoorUnit", "OutdoorUnit", "Other" }
+                }
+            })
+        };
+        updateFeatReq.Headers.Add("X-Workspace-Id", newWorkspaceId.ToString());
+        var updateFeatResp = await client.SendAsync(updateFeatReq);
+        updateFeatResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updatedJson = await updateFeatResp.Content.ReadFromJsonAsync<JsonElement>();
+        updatedJson.GetProperty("featureConfig").GetProperty("showCustomerApprovals").GetBoolean().Should().BeFalse();
+        updatedJson.GetProperty("featureConfig").GetProperty("quickAccessoriesEn").EnumerateArray().Select(x => x.GetString()).Should().Equal("Remote Control", "Circuit Breaker");
 
         // Verify unauthorized workspace header is rejected with 403 Forbidden
         await using var scope = _factory.Services.CreateAsyncScope();
@@ -152,5 +187,72 @@ public class ServoraMultiIndustryTests : IClassFixture<IntegrationTestWebAppFact
         var runResult = await runResp.Content.ReadFromJsonAsync<PreventiveMaintenanceRunResult>();
         runResult.Should().NotBeNull();
         runResult!.TicketsAutoCreated.Should().BeGreaterThanOrEqualTo(1);
+    }
+
+    [Fact]
+    public async Task MultiAssetLinking_And_GeneralizedAttachmentType_WorkOnTickets()
+    {
+        var client = _factory.CreateClient();
+
+        var custResp = await client.PostAsJsonAsync("/api/v1/customers", new
+        {
+            fullName = "HVAC Site Client",
+            phoneNumber = "+628111222333",
+            requesterType = "Customer",
+            companyName = "PT Sejuk Bersama"
+        });
+        custResp.StatusCode.Should().Be(HttpStatusCode.Created);
+        var customerId = (await custResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+
+        var primaryAssetResp = await client.PostAsJsonAsync($"/api/v1/customers/{customerId}/devices", new
+        {
+            deviceType = "Split AC",
+            brand = "Daikin",
+            model = "FTKC25",
+            serialNumber = "INDOOR-01"
+        });
+        primaryAssetResp.StatusCode.Should().Be(HttpStatusCode.Created);
+        var primaryAssetId = (await primaryAssetResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+
+        var secondaryAssetResp = await client.PostAsJsonAsync($"/api/v1/customers/{customerId}/devices", new
+        {
+            deviceType = "Split AC",
+            brand = "Daikin",
+            model = "RKC25",
+            serialNumber = "OUTDOOR-01"
+        });
+        secondaryAssetResp.StatusCode.Should().Be(HttpStatusCode.Created);
+        var secondaryAssetId = (await secondaryAssetResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+
+        var ticketResp = await client.PostAsJsonAsync("/api/v1/service-tickets", new
+        {
+            customerId,
+            deviceId = primaryAssetId,
+            complaint = "Multi-unit AC servicing",
+            approvalRequired = false,
+            isPreApproved = false,
+            serviceLocationType = "OnSite"
+        });
+        ticketResp.StatusCode.Should().Be(HttpStatusCode.Created);
+        var ticketId = (await ticketResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+
+        var linkResp = await client.PostAsJsonAsync($"/api/v1/service-tickets/{ticketId}/assets", new
+        {
+            assetId = secondaryAssetId,
+            notes = "Outdoor condenser unit"
+        });
+        linkResp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var detailResp = await client.GetAsync($"/api/v1/service-tickets/{ticketId}");
+        detailResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var detailJson = await detailResp.Content.ReadFromJsonAsync<JsonElement>();
+        detailJson.GetProperty("linkedAssets").GetArrayLength().Should().Be(1);
+        detailJson.GetProperty("linkedAssets")[0].GetProperty("serviceAssetId").GetInt32().Should().Be(secondaryAssetId);
+
+        var unlinkResp = await client.DeleteAsync($"/api/v1/service-tickets/{ticketId}/assets/{secondaryAssetId}");
+        unlinkResp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var detailAfter = await client.GetFromJsonAsync<JsonElement>($"/api/v1/service-tickets/{ticketId}");
+        detailAfter.GetProperty("linkedAssets").GetArrayLength().Should().Be(0);
     }
 }

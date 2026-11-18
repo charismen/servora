@@ -2,8 +2,8 @@
 	import { enhance } from '$app/forms';
 	import { untrack } from 'svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { createTranslator } from '$lib/i18n';
-	import type { OperatingMode, TerminologyConfig } from '$lib/types/auth';
+	import { createTranslator, resolveFeatureConfig } from '$lib/i18n';
+	import type { OperatingMode, TerminologyConfig, WorkspaceFeatureConfig } from '$lib/types/auth';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -62,13 +62,30 @@
 		)
 	);
 
+	let featureConfig = $state<WorkspaceFeatureConfig>(
+		untrack(() =>
+			structuredClone(
+				resolveFeatureConfig(
+					data.user.workspace.featureConfig,
+					data.user.workspace.operatingMode
+				)
+			)
+		)
+	);
+
 	function selectBlueprint(key: string) {
 		selectedBlueprintKey = key;
 		const bp = data.blueprints.find((b) => b.key === key);
 		if (bp) {
 			terminology = structuredClone(bp.terminology);
+			const nextMode = isCreate ? bp.recommendedMode : operatingMode;
 			if (isCreate) {
 				operatingMode = bp.recommendedMode;
+			}
+			featureConfig = structuredClone(bp.featureConfig);
+			if (nextMode === 'InternalMaintenance') {
+				featureConfig.showBillingAndPayments = false;
+				featureConfig.showCustomerApprovals = false;
 			}
 		}
 	}
@@ -131,6 +148,7 @@
 		<input type="hidden" name="operatingMode" value={operatingMode} />
 		<input type="hidden" name="industryBlueprintKey" value={selectedBlueprintKey} />
 		<input type="hidden" name="terminologyJson" value={JSON.stringify(terminology)} />
+		<input type="hidden" name="featureConfigJson" value={JSON.stringify(featureConfig)} />
 		<input type="hidden" name="organizationName" value={organizationName} />
 		<input type="hidden" name="organizationLogoUrl" value={organizationLogoUrl} />
 		<input type="hidden" name="workspaceName" value={workspaceName} />
@@ -297,6 +315,50 @@
 								<input bind:value={terminology.id.requesterPlural} placeholder={t('onboarding.termRequesterPlural')} class="rounded-lg border border-stone px-2.5 py-1.5 text-xs" />
 							</div>
 						</div>
+					</div>
+				</div>
+
+				<!-- Configurable Intake & Module Feature Toggles -->
+				<div class="space-y-3 rounded-xl border border-stone p-4">
+					<h3 class="text-sm font-semibold text-ink">{t('blueprints.featureTogglesTitle')}</h3>
+					<div class="grid gap-2 sm:grid-cols-2 text-xs text-ink">
+						<label class="flex items-center gap-2 rounded-lg border border-stone/70 bg-surface/50 px-3 py-2">
+							<input type="checkbox" bind:checked={featureConfig.showPreRepairChecklist} class="rounded border-stone text-claytile" />
+							<span>{t('blueprints.showPreRepairChecklist')}</span>
+						</label>
+						<label class="flex items-center gap-2 rounded-lg border border-stone/70 bg-surface/50 px-3 py-2">
+							<input type="checkbox" bind:checked={featureConfig.showAccessories} class="rounded border-stone text-claytile" />
+							<span>{t('blueprints.showAccessories')}</span>
+						</label>
+						<label class="flex items-center gap-2 rounded-lg border border-stone/70 bg-surface/50 px-3 py-2">
+							<input
+								type="checkbox"
+								checked={featureConfig.showSecurityCredentials}
+								onchange={(e) => {
+									const checked = (e.currentTarget as HTMLInputElement).checked;
+									featureConfig.showSecurityCredentials = checked;
+									featureConfig.securityCredentialMode = checked
+										? featureConfig.securityCredentialMode === 'None'
+											? 'PasscodeOnly'
+											: featureConfig.securityCredentialMode
+										: 'None';
+								}}
+								class="rounded border-stone text-claytile"
+							/>
+							<span>{t('blueprints.showSecurityCredentials')}</span>
+						</label>
+						<label class="flex items-center gap-2 rounded-lg border border-stone/70 bg-surface/50 px-3 py-2">
+							<input type="checkbox" bind:checked={featureConfig.showBillingAndPayments} class="rounded border-stone text-claytile" />
+							<span>{t('blueprints.showBillingAndPayments')}</span>
+						</label>
+						<label class="flex items-center gap-2 rounded-lg border border-stone/70 bg-surface/50 px-3 py-2">
+							<input type="checkbox" bind:checked={featureConfig.enableFieldService} class="rounded border-stone text-claytile" />
+							<span>{t('blueprints.enableFieldService')}</span>
+						</label>
+						<label class="flex items-center gap-2 rounded-lg border border-stone/70 bg-surface/50 px-3 py-2">
+							<input type="checkbox" bind:checked={featureConfig.showWarrantySection} class="rounded border-stone text-claytile" />
+							<span>{t('blueprints.showWarrantySection')}</span>
+						</label>
 					</div>
 				</div>
 			</div>

@@ -74,14 +74,17 @@
 		],
 		consumedParts: [
 			{
-				sku: 'BAT-001',
+				sku: 'PRT-001',
 				itemName: t('settings.samplePartItem'),
 				unit: 'pcs',
 				netQuantity: 1,
 				unitPrice: samplePartPrice,
 				lineTotal: samplePartPrice
 			}
-		]
+		],
+		isInternalWorkOrder: data.user?.workspace?.operatingMode === 'InternalMaintenance',
+		terminology: data.user?.workspace?.terminology,
+		featureConfig: data.user?.workspace?.featureConfig
 	});
 
 	$effect(() => {
@@ -103,7 +106,7 @@
 			<form method="POST" class="rounded-xl border border-stone bg-white p-md sm:p-lg shadow-2xs space-y-lg" use:enhance>
 				<div class="border-b border-stone pb-md">
 					<h3 class="font-subheading text-subheading font-semibold text-primary">{t('settings.printTemplates')}</h3>
-					<p class="text-caption text-secondary mt-0.5">Configure what sections and terms appear on printed customer intake and claim tickets.</p>
+					<p class="text-caption text-secondary mt-0.5">{t('settings.printConfigSubtitle')}</p>
 				</div>
 
 				<div class="space-y-1 block">
@@ -116,21 +119,21 @@
 						name="termsAndConditions"
 						rows="6"
 						class="w-full rounded-input border border-stone bg-white px-3 py-2 font-mono text-body-sm text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary shadow-2xs"
-						placeholder="Store warranty terms, uncollected device policy, and inspection disclaimer..."
+						placeholder={t('settings.printTermsPlaceholder')}
 					></textarea>
 				</div>
 
 				<!-- Section Visibility Toggles -->
 				<div class="space-y-2 pt-1">
 					<span class="text-label-caps font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block">
-						Receipt Sections & Elements
+						{t('settings.printSectionsLabel')}
 					</span>
 					<div class="space-y-sm">
 						<label class="flex items-start gap-sm rounded-xl border border-stone bg-ash/30 p-sm sm:p-md text-body-sm text-secondary hover:bg-ash/60 transition-colors cursor-pointer select-none">
 							<input type="checkbox" name="showPhysicalCondition" bind:checked={settings.showPhysicalCondition} class="mt-0.5 rounded border-stone text-primary focus:ring-primary" />
 							<div>
 								<span class="font-semibold text-primary text-body-sm block">{t('settings.showPhysicalCondition')}</span>
-								<span class="text-[11px] text-secondary block mt-0.5">Print scratched casing, dents, and cosmetic notes</span>
+								<span class="text-[11px] text-secondary block mt-0.5">{t('settings.printPhysicalConditionHint')}</span>
 							</div>
 						</label>
 
@@ -138,7 +141,7 @@
 							<input type="checkbox" name="showAccessories" bind:checked={settings.showAccessories} class="mt-0.5 rounded border-stone text-primary focus:ring-primary" />
 							<div>
 								<span class="font-semibold text-primary text-body-sm block">{t('settings.showAccessories')}</span>
-								<span class="text-[11px] text-secondary block mt-0.5">List power adapters, bags, and cables in shop custody</span>
+								<span class="text-[11px] text-secondary block mt-0.5">{t('settings.printAccessoriesHint')}</span>
 							</div>
 						</label>
 
@@ -146,7 +149,7 @@
 							<input type="checkbox" name="showPhotoNotes" bind:checked={settings.showPhotoNotes} class="mt-0.5 rounded border-stone text-primary focus:ring-primary" />
 							<div>
 								<span class="font-semibold text-primary text-body-sm block">{t('settings.showPhotoNotes')}</span>
-								<span class="text-[11px] text-secondary block mt-0.5">Print condition photo notes and diagnostic findings</span>
+								<span class="text-[11px] text-secondary block mt-0.5">{t('settings.printPhotoNotesHint')}</span>
 							</div>
 						</label>
 
@@ -154,7 +157,7 @@
 							<input type="checkbox" name="showQrCode" bind:checked={settings.showQrCode} class="mt-0.5 rounded border-stone text-primary focus:ring-primary" />
 							<div>
 								<span class="font-semibold text-primary text-body-sm block">{t('settings.showQrCode')}</span>
-								<span class="text-[11px] text-secondary block mt-0.5">Print scannable QR code linking to public tracking URL</span>
+								<span class="text-[11px] text-secondary block mt-0.5">{t('settings.printQrCodeHint')}</span>
 							</div>
 						</label>
 
@@ -162,7 +165,7 @@
 							<input type="checkbox" name="showPhoneNumber" bind:checked={settings.showPhoneNumber} class="mt-0.5 rounded border-stone text-primary focus:ring-primary" />
 							<div>
 								<span class="font-semibold text-primary text-body-sm block">{t('settings.showPhoneNumber')}</span>
-								<span class="text-[11px] text-secondary block mt-0.5">Include customer contact and store helpline numbers</span>
+								<span class="text-[11px] text-secondary block mt-0.5">{t('settings.printPhoneNumberHint')}</span>
 							</div>
 						</label>
 
@@ -225,7 +228,7 @@
 				<div class="flex items-center gap-2">
 					<span class="inline-flex items-center gap-1.5 text-caption font-medium text-secondary bg-ash/60 px-2.5 py-1 rounded-full border border-stone/60">
 						<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-						<span>{activePaperFormat === 'a4' ? '210mm x 297mm' : '80mm Continuous'}</span>
+						<span>{activePaperFormat === 'a4' ? t('settings.printPaperA4Spec') : t('settings.printPaperThermalSpec')}</span>
 					</span>
 				</div>
 			</div>

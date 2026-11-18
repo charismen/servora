@@ -43,18 +43,20 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const operatingMode = String(formData.get('operatingMode') ?? 'Commercial');
 		const terminologyJson = String(formData.get('terminologyJson') ?? '{}');
+		const featureConfigRaw = String(formData.get('featureConfigJson') ?? '');
 
 		try {
 			const terminology = JSON.parse(terminologyJson);
+			const featureConfig = featureConfigRaw ? JSON.parse(featureConfigRaw) : undefined;
 			await serverApiRequest(fetch, '/blueprints/terminology', {
 				method: 'PUT',
 				token,
-				body: { operatingMode, terminology }
+				body: { operatingMode, terminology, featureConfig }
 			});
-			return { success: true, messageKey: 'blueprints.terminologySaved' };
+			return { success: true, messageKey: 'blueprints.featureConfigSaved' };
 		} catch (error) {
 			if (error instanceof ServerApiError) return fail(error.status, { success: false, message: error.message });
-			return fail(400, { success: false, message: 'Invalid terminology payload.' });
+			return fail(400, { success: false, message: 'Invalid workspace blueprint configuration payload.' });
 		}
 	},
 

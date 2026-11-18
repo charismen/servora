@@ -1,7 +1,32 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Features.Shops;
 
 namespace Servora.Api.Features.Blueprints;
+
+public enum SecurityCredentialMode
+{
+    None,
+    PasscodeOnly,
+    PasscodeAndPattern
+}
+
+public sealed record WorkspaceFeatureConfig(
+    bool ShowSecurityCredentials,
+    SecurityCredentialMode SecurityCredentialMode,
+    bool ShowAccessories,
+    string[] QuickAccessoriesEn,
+    string[] QuickAccessoriesId,
+    bool ShowPreRepairChecklist,
+    bool ShowPhysicalConditionNotes,
+    bool ShowWarrantySection,
+    bool ShowBillingAndPayments,
+    bool ShowCustomerApprovals,
+    bool EnableFieldService,
+    ServiceLocationType DefaultServiceLocationType,
+    bool EnablePreventiveMaintenance,
+    string[] AttachmentTypes);
 
 public sealed record TerminologyLabels(
     string AssetSingular,
@@ -68,6 +93,7 @@ public sealed record IndustryBlueprintDefinition(
     string DefaultTicketPrefix,
     string DefaultAssetCategory,
     TerminologyConfigDto Terminology,
+    WorkspaceFeatureConfig FeatureConfig,
     IReadOnlyList<BlueprintStatusSeed> Statuses,
     IReadOnlyList<BlueprintFieldSeed> Fields,
     IReadOnlyList<BlueprintChecklistSeed> Checklists,
@@ -77,7 +103,8 @@ public static class IndustryBlueprintCatalog
 {
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     public static readonly IReadOnlyList<IndustryBlueprintDefinition> All =
@@ -95,6 +122,21 @@ public static class IndustryBlueprintCatalog
             Terminology: new TerminologyConfigDto(
                 En: new TerminologyLabels("Device", "Devices", "Service Ticket", "Service Tickets", "Customer", "Customers", "Serial Number", "Asset Label / Tag", "Runtime Hours"),
                 Id: new TerminologyLabels("Perangkat", "Perangkat", "Tiket Servis", "Tiket Servis", "Pelanggan", "Pelanggan", "Nomor Seri", "Label / Tag Aset", "Jam Pemakaian")),
+            FeatureConfig: new WorkspaceFeatureConfig(
+                ShowSecurityCredentials: true,
+                SecurityCredentialMode: SecurityCredentialMode.PasscodeOnly,
+                ShowAccessories: true,
+                QuickAccessoriesEn: ["Charger / Power Adapter", "Laptop Bag / Sleeve", "Power Cable", "Mouse / Dongle", "Original Box"],
+                QuickAccessoriesId: ["Charger / Adaptor", "Tas / Sleeve Laptop", "Kabel Power", "Mouse / Dongle", "Dus / Kotak"],
+                ShowPreRepairChecklist: true,
+                ShowPhysicalConditionNotes: true,
+                ShowWarrantySection: true,
+                ShowBillingAndPayments: true,
+                ShowCustomerApprovals: true,
+                EnableFieldService: false,
+                DefaultServiceLocationType: ServiceLocationType.InShop,
+                EnablePreventiveMaintenance: true,
+                AttachmentTypes: ["DeviceFront", "DeviceBack", "Screen", "Keyboard", "Accessories", "Damage", "SerialOrTag", "Receipt", "Other"]),
             Statuses:
             [
                 new("Received", "#64748b", 1, IsInitial: true),
@@ -144,6 +186,21 @@ public static class IndustryBlueprintCatalog
             Terminology: new TerminologyConfigDto(
                 En: new TerminologyLabels("Device", "Devices", "Repair Ticket", "Repair Tickets", "Customer", "Customers", "IMEI / Serial", "Color / Model Code", "Battery Cycles"),
                 Id: new TerminologyLabels("Perangkat", "Perangkat", "Tiket Perbaikan", "Tiket Perbaikan", "Pelanggan", "Pelanggan", "IMEI / Nomor Seri", "Warna / Kode Model", "Siklus Baterai")),
+            FeatureConfig: new WorkspaceFeatureConfig(
+                ShowSecurityCredentials: true,
+                SecurityCredentialMode: SecurityCredentialMode.PasscodeAndPattern,
+                ShowAccessories: true,
+                QuickAccessoriesEn: ["Protective Case", "SIM Tray / SD Card", "Charging Cable", "Adapter", "Box"],
+                QuickAccessoriesId: ["Casing / Pelindung", "Slot SIM / Kartu Memori", "Kabel Charger", "Kepala Charger", "Dus"],
+                ShowPreRepairChecklist: true,
+                ShowPhysicalConditionNotes: true,
+                ShowWarrantySection: true,
+                ShowBillingAndPayments: true,
+                ShowCustomerApprovals: true,
+                EnableFieldService: false,
+                DefaultServiceLocationType: ServiceLocationType.InShop,
+                EnablePreventiveMaintenance: false,
+                AttachmentTypes: ["FrontView", "BackView", "Screen", "Accessories", "Damage", "BeforeRepair", "AfterRepair", "Receipt", "Other"]),
             Statuses:
             [
                 new("Received", "#64748b", 1, IsInitial: true),
@@ -192,6 +249,21 @@ public static class IndustryBlueprintCatalog
             Terminology: new TerminologyConfigDto(
                 En: new TerminologyLabels("Vehicle", "Vehicles", "Repair Order", "Repair Orders", "Customer", "Customers", "License Plate", "VIN / Chassis No.", "Odometer (km)"),
                 Id: new TerminologyLabels("Kendaraan", "Kendaraan", "Perintah Kerja", "Perintah Kerja", "Pelanggan", "Pelanggan", "Nomor Polisi", "Nomor Rangka / VIN", "Odometer (km)")),
+            FeatureConfig: new WorkspaceFeatureConfig(
+                ShowSecurityCredentials: false,
+                SecurityCredentialMode: SecurityCredentialMode.None,
+                ShowAccessories: true,
+                QuickAccessoriesEn: ["Vehicle Key / Fob", "Registration (STNK)", "Service Book", "Spare Tire / Tool Kit", "Helmet / Box"],
+                QuickAccessoriesId: ["Kunci / Remote Kendaraan", "STNK", "Buku Servis", "Ban Serep / Tool Kit", "Helm / Box Motor"],
+                ShowPreRepairChecklist: true,
+                ShowPhysicalConditionNotes: true,
+                ShowWarrantySection: true,
+                ShowBillingAndPayments: true,
+                ShowCustomerApprovals: true,
+                EnableFieldService: false,
+                DefaultServiceLocationType: ServiceLocationType.InShop,
+                EnablePreventiveMaintenance: true,
+                AttachmentTypes: ["ExteriorWalkaround", "Odometer", "EngineBay", "Damage", "BeforeRepair", "AfterRepair", "Receipt", "Other"]),
             Statuses:
             [
                 new("Checked In", "#64748b", 1, IsInitial: true),
@@ -240,6 +312,21 @@ public static class IndustryBlueprintCatalog
             Terminology: new TerminologyConfigDto(
                 En: new TerminologyLabels("AC Unit", "AC Units", "Service Visit", "Service Visits", "Client", "Clients", "Indoor Unit Serial", "Outdoor Unit Serial", "Operating Hours"),
                 Id: new TerminologyLabels("Unit AC", "Unit AC", "Kunjungan Servis", "Kunjungan Servis", "Klien", "Klien", "Seri Unit Indoor", "Seri Unit Outdoor", "Jam Operasi")),
+            FeatureConfig: new WorkspaceFeatureConfig(
+                ShowSecurityCredentials: false,
+                SecurityCredentialMode: SecurityCredentialMode.None,
+                ShowAccessories: true,
+                QuickAccessoriesEn: ["Remote Control", "Mounting Bracket", "Drain Hose", "Power Plug / MCB"],
+                QuickAccessoriesId: ["Remote Control", "Breket Dinding", "Selang Pembuangan", "Steker / MCB"],
+                ShowPreRepairChecklist: true,
+                ShowPhysicalConditionNotes: true,
+                ShowWarrantySection: true,
+                ShowBillingAndPayments: true,
+                ShowCustomerApprovals: true,
+                EnableFieldService: true,
+                DefaultServiceLocationType: ServiceLocationType.OnSite,
+                EnablePreventiveMaintenance: true,
+                AttachmentTypes: ["IndoorUnit", "OutdoorUnit", "GaugeReading", "SiteLocation", "BeforeRepair", "AfterRepair", "Damage", "Receipt", "Other"]),
             Statuses:
             [
                 new("Scheduled", "#64748b", 1, IsInitial: true),
@@ -286,6 +373,21 @@ public static class IndustryBlueprintCatalog
             Terminology: new TerminologyConfigDto(
                 En: new TerminologyLabels("Equipment", "Equipment", "Work Order", "Work Orders", "Department", "Departments", "Asset Tag", "Location / Serial", "Runtime Hours"),
                 Id: new TerminologyLabels("Peralatan", "Peralatan", "Perintah Kerja", "Perintah Kerja", "Departemen", "Departemen", "Tag Aset", "Lokasi / Seri", "Jam Operasi")),
+            FeatureConfig: new WorkspaceFeatureConfig(
+                ShowSecurityCredentials: false,
+                SecurityCredentialMode: SecurityCredentialMode.None,
+                ShowAccessories: false,
+                QuickAccessoriesEn: ["Access Key / Card", "Manual Book", "Spare Fuse / Key", "Safety Lock"],
+                QuickAccessoriesId: ["Kunci / Kartu Akses", "Buku Manual", "Sekring Cadangan", "Gembok LOTO"],
+                ShowPreRepairChecklist: true,
+                ShowPhysicalConditionNotes: true,
+                ShowWarrantySection: false,
+                ShowBillingAndPayments: false,
+                ShowCustomerApprovals: false,
+                EnableFieldService: true,
+                DefaultServiceLocationType: ServiceLocationType.OnSite,
+                EnablePreventiveMaintenance: true,
+                AttachmentTypes: ["SiteLocation", "EquipmentTag", "SafetyCheck", "GaugeReading", "Damage", "BeforeRepair", "AfterRepair", "Other"]),
             Statuses:
             [
                 new("Logged", "#64748b", 1, IsInitial: true),
@@ -332,6 +434,21 @@ public static class IndustryBlueprintCatalog
             Terminology: new TerminologyConfigDto(
                 En: new TerminologyLabels("Asset", "Assets", "Service Ticket", "Service Tickets", "Requester", "Requesters", "Primary ID", "Secondary ID", "Usage Meter"),
                 Id: new TerminologyLabels("Aset", "Aset", "Tiket Layanan", "Tiket Layanan", "Pemohon", "Pemohon", "ID Utama", "ID Sekunder", "Meter Pemakaian")),
+            FeatureConfig: new WorkspaceFeatureConfig(
+                ShowSecurityCredentials: false,
+                SecurityCredentialMode: SecurityCredentialMode.None,
+                ShowAccessories: true,
+                QuickAccessoriesEn: ["Power Adapter / Cord", "Manual / Key", "Carrying Case", "Spare Accessory"],
+                QuickAccessoriesId: ["Adaptor / Kabel", "Buku Manual / Kunci", "Tas / Kotak", "Aksesoris Tambahan"],
+                ShowPreRepairChecklist: true,
+                ShowPhysicalConditionNotes: true,
+                ShowWarrantySection: true,
+                ShowBillingAndPayments: true,
+                ShowCustomerApprovals: true,
+                EnableFieldService: true,
+                DefaultServiceLocationType: ServiceLocationType.InShop,
+                EnablePreventiveMaintenance: true,
+                AttachmentTypes: ["FrontView", "BackView", "SerialOrTag", "Damage", "BeforeRepair", "AfterRepair", "Receipt", "Other"]),
             Statuses:
             [
                 new("Open", "#64748b", 1, IsInitial: true),
@@ -381,5 +498,60 @@ public static class IndustryBlueprintCatalog
         }
 
         return GetByKey(blueprintKey).Terminology;
+    }
+
+    public static WorkspaceFeatureConfig GetDefaultFeatureConfig(string blueprintKey, OperatingMode? operatingMode = null)
+    {
+        var defaults = GetByKey(blueprintKey).FeatureConfig;
+        if (operatingMode == OperatingMode.InternalMaintenance)
+        {
+            return defaults with
+            {
+                ShowBillingAndPayments = false,
+                ShowCustomerApprovals = false
+            };
+        }
+
+        if (operatingMode is OperatingMode.Commercial or OperatingMode.Hybrid &&
+            string.Equals(blueprintKey?.Trim(), "facility_internal", StringComparison.OrdinalIgnoreCase))
+        {
+            return defaults with
+            {
+                ShowBillingAndPayments = true,
+                ShowCustomerApprovals = true
+            };
+        }
+
+        return defaults;
+    }
+
+    public static string SerializeFeatureConfig(WorkspaceFeatureConfig config) =>
+        JsonSerializer.Serialize(config, JsonOptions);
+
+    public static WorkspaceFeatureConfig DeserializeFeatureConfig(string? json, string blueprintKey, OperatingMode? operatingMode = null)
+    {
+        var fallback = GetDefaultFeatureConfig(blueprintKey, operatingMode);
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<WorkspaceFeatureConfig>(json, JsonOptions);
+                if (parsed is not null)
+                {
+                    return parsed with
+                    {
+                        QuickAccessoriesEn = parsed.QuickAccessoriesEn ?? fallback.QuickAccessoriesEn,
+                        QuickAccessoriesId = parsed.QuickAccessoriesId ?? fallback.QuickAccessoriesId,
+                        AttachmentTypes = parsed.AttachmentTypes is { Length: > 0 } ? parsed.AttachmentTypes : fallback.AttachmentTypes
+                    };
+                }
+            }
+            catch
+            {
+                // Fall back to blueprint defaults
+            }
+        }
+
+        return fallback;
     }
 }

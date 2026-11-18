@@ -150,6 +150,8 @@ public static class DatabaseSeeder
             OperatingMode = OperatingMode.Commercial,
             IndustryBlueprintKey = defaultBlueprint.Key,
             TerminologyConfig = IndustryBlueprintCatalog.SerializeTerminology(defaultBlueprint.Terminology),
+            FeatureConfig = IndustryBlueprintCatalog.SerializeFeatureConfig(
+                IndustryBlueprintCatalog.GetDefaultFeatureConfig(defaultBlueprint.Key, OperatingMode.Commercial)),
             DefaultLocale = "en",
             TimeZone = "Asia/Jakarta",
             CurrencyCode = "IDR",
@@ -183,6 +185,8 @@ public static class DatabaseSeeder
                 OperatingMode = OperatingMode.InternalMaintenance,
                 IndustryBlueprintKey = facilityBlueprint.Key,
                 TerminologyConfig = IndustryBlueprintCatalog.SerializeTerminology(facilityBlueprint.Terminology),
+                FeatureConfig = IndustryBlueprintCatalog.SerializeFeatureConfig(
+                    IndustryBlueprintCatalog.GetDefaultFeatureConfig(facilityBlueprint.Key, OperatingMode.InternalMaintenance)),
                 DefaultLocale = "en",
                 TimeZone = "Asia/Jakarta",
                 CurrencyCode = "IDR",

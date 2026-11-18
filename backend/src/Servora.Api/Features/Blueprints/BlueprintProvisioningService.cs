@@ -28,11 +28,14 @@ public sealed class BlueprintProvisioningService
         bool replaceExistingStatuses = false,
         bool replaceExistingFieldsAndChecklists = false,
         TerminologyConfigDto? customTerminology = null,
+        WorkspaceFeatureConfig? customFeatureConfig = null,
         CancellationToken cancellationToken = default)
     {
         var blueprint = IndustryBlueprintCatalog.GetByKey(blueprintKey);
         workspace.IndustryBlueprintKey = blueprint.Key;
         workspace.TerminologyConfig = IndustryBlueprintCatalog.SerializeTerminology(customTerminology ?? blueprint.Terminology);
+        workspace.FeatureConfig = IndustryBlueprintCatalog.SerializeFeatureConfig(
+            customFeatureConfig ?? IndustryBlueprintCatalog.GetDefaultFeatureConfig(blueprint.Key, workspace.OperatingMode));
 
         // 1. Seed / align workspace profile settings
         await EnsureWorkspaceSettingsAsync(workspace, blueprint, cancellationToken);

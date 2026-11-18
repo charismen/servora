@@ -1,4 +1,22 @@
 export type OperatingMode = 'Commercial' | 'InternalMaintenance' | 'Hybrid';
+export type SecurityCredentialMode = 'None' | 'PasscodeOnly' | 'PasscodeAndPattern';
+
+export type WorkspaceFeatureConfig = {
+	showSecurityCredentials: boolean;
+	securityCredentialMode: SecurityCredentialMode;
+	showAccessories: boolean;
+	quickAccessoriesEn: string[];
+	quickAccessoriesId: string[];
+	showPreRepairChecklist: boolean;
+	showPhysicalConditionNotes: boolean;
+	showWarrantySection: boolean;
+	showBillingAndPayments: boolean;
+	showCustomerApprovals: boolean;
+	enableFieldService: boolean;
+	defaultServiceLocationType: 'InShop' | 'OnSite' | 'PickupDelivery';
+	enablePreventiveMaintenance: boolean;
+	attachmentTypes: string[];
+};
 
 export type TerminologyLabels = {
 	assetSingular: string;
@@ -26,6 +44,7 @@ export type WorkspaceContext = {
 	operatingMode: OperatingMode;
 	industryBlueprintKey: string;
 	terminology: TerminologyConfig;
+	featureConfig: WorkspaceFeatureConfig;
 	defaultLocale: string;
 	timeZone: string;
 	currencyCode: string;

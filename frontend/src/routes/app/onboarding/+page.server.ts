@@ -36,6 +36,7 @@ export const actions: Actions = {
 		const replaceFieldsAndChecklists = formData.get('replaceFieldsAndChecklists') === 'on';
 		const seedSampleData = formData.get('seedSampleData') === 'on';
 		const terminologyRaw = String(formData.get('terminologyJson') ?? '');
+		const featureConfigRaw = String(formData.get('featureConfigJson') ?? '');
 
 		let terminology: unknown = null;
 		if (terminologyRaw) {
@@ -43,6 +44,15 @@ export const actions: Actions = {
 				terminology = JSON.parse(terminologyRaw);
 			} catch {
 				terminology = null;
+			}
+		}
+
+		let featureConfig: unknown = null;
+		if (featureConfigRaw) {
+			try {
+				featureConfig = JSON.parse(featureConfigRaw);
+			} catch {
+				featureConfig = null;
 			}
 		}
 
@@ -66,7 +76,8 @@ export const actions: Actions = {
 						timeZone,
 						currencyCode,
 						terminology,
-						seedSampleData
+						seedSampleData,
+						featureConfig
 					}
 				});
 
@@ -105,7 +116,8 @@ export const actions: Actions = {
 					terminology,
 					replaceStatuses,
 					replaceFieldsAndChecklists,
-					seedSampleData
+					seedSampleData,
+					featureConfig
 				}
 			});
 

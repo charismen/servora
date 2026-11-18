@@ -12,23 +12,35 @@ export const POST: RequestHandler = async ({ request, cookies, fetch }) => {
 	try {
 		const body = await request.json();
 		const fullName = String(body.fullName ?? '').trim();
+		const requesterType = String(body.requesterType ?? 'Customer').trim() || 'Customer';
 		const phoneNumber = sanitizePhoneNumber(String(body.phoneNumber ?? ''));
 		const emailVal = String(body.email ?? '').trim();
 		const email = emailVal === '' ? undefined : emailVal;
 		const addressVal = String(body.address ?? '').trim();
 		const address = addressVal === '' ? undefined : addressVal;
+		const companyName = String(body.companyName ?? '').trim() || undefined;
+		const departmentName = String(body.departmentName ?? '').trim() || undefined;
+		const departmentCode = String(body.departmentCode ?? '').trim() || undefined;
+		const costCenter = String(body.costCenter ?? '').trim() || undefined;
+		const employeeId = String(body.employeeId ?? '').trim() || undefined;
 		const notesVal = String(body.notes ?? '').trim();
 		const notes = notesVal === '' ? undefined : notesVal;
 
-		if (!fullName || !phoneNumber) {
-			return json({ error: 'Full name and phone number are required.' }, { status: 400 });
+		if (!fullName || (requesterType === 'Customer' && !phoneNumber)) {
+			return json({ error: 'Full name and phone number are required for retail customers.' }, { status: 400 });
 		}
 
 		const payload = {
 			fullName,
+			requesterType,
 			phoneNumber,
 			email,
 			address,
+			companyName,
+			departmentName,
+			departmentCode,
+			costCenter,
+			employeeId,
 			notes
 		};
 
@@ -41,10 +53,16 @@ export const POST: RequestHandler = async ({ request, cookies, fetch }) => {
 		return json({
 			customer: {
 				id: created.id,
+				requesterType,
 				fullName,
 				phoneNumber,
 				email,
 				address,
+				companyName,
+				departmentName,
+				departmentCode,
+				costCenter,
+				employeeId,
 				notes,
 				isBanned: false,
 				isStarred: false,

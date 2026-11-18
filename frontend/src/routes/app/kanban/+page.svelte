@@ -2,7 +2,7 @@
 	import { deserialize } from '$app/forms';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { tilt } from '$lib/components/tilt';
-	import { createTranslator, formatDate } from '$lib/i18n';
+	import { createTranslator, formatDate, resolveFeatureConfig, resolveTerminology } from '$lib/i18n';
 	import { toast } from '$lib/stores/toast.svelte';
 	import type { ActionData, PageData } from './$types';
 	import type { KanbanColumn, KanbanTicket } from '$lib/types/service-tickets';
@@ -12,6 +12,13 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const t = $derived(createTranslator(data.locale));
+	const terms = $derived(resolveTerminology(data.user?.workspace?.terminology, data.locale));
+	const features = $derived(
+		resolveFeatureConfig(
+			data.user?.workspace?.featureConfig ?? data.blueprintConfig?.featureConfig,
+			data.user?.workspace?.operatingMode
+		)
+	);
 
 	// Optimistic local override (null means use data.columns from server)
 	let optimisticColumns = $state<KanbanColumn[] | null>(null);
@@ -33,7 +40,7 @@
 
 	$effect(() => {
 		try {
-			const saved = localStorage.getItem('smp_kanban_collapsed');
+			const saved = localStorage.getItem('servora_kanban_collapsed');
 			if (saved) {
 				collapsedColumns = new Set(JSON.parse(saved));
 			}
@@ -49,7 +56,7 @@
 		}
 		collapsedColumns = next;
 		try {
-			localStorage.setItem('smp_kanban_collapsed', JSON.stringify([...next]));
+			localStorage.setItem('servora_kanban_collapsed', JSON.stringify([...next]));
 		} catch {}
 	}
 
@@ -494,11 +501,11 @@
 </script>
 
 <div class="space-y-lg pb-xl">
-	<PageHeader items={[{ label: t('common.console'), href: '/app' }, { label: t('nav.kanban') }]} title={t('kanban.title')} subtitle={t('kanban.subtitle')}>
+	<PageHeader items={[{ label: t('common.console'), href: '/app' }, { label: t('nav.kanban') }]} title={`${t('kanban.title')} — ${terms.ticketPlural}`} subtitle={t('kanban.subtitle')}>
 		{#snippet actions()}
 		<a class="px-button-x py-button-y rounded-button font-medium font-body-sm text-body-sm inline-flex items-center gap-2 bg-ink text-white hover:bg-ink/90 active:scale-95 transition-all shadow-xs shrink-0" href="/app/tickets/new">
 			<span class="material-symbols-outlined text-[18px]">add</span>
-			<span>{t('tickets.list.newTicket')}</span>
+			<span>+ {terms.ticketSingular}</span>
 		</a>
 		{/snippet}
 	</PageHeader>
@@ -878,10 +885,10 @@
 										<span class="font-medium text-ink/80">{ticket.customerName}</span> · {ticket.complaint}
 									</p>
 								</a>
-								{#if ticket.waitingApproval || ticket.unpaid || ticket.blocked || ticket.overdue}
+								{#if ticket.waitingApproval || (features.showBillingAndPayments && ticket.unpaid) || ticket.blocked || ticket.overdue}
 									<div class="flex flex-wrap gap-1 mt-2">
 										{#if ticket.waitingApproval}<GlowingBadge status="Waiting Approval">{t('kanban.waitingApproval')}</GlowingBadge>{/if}
-										{#if ticket.unpaid}<GlowingBadge status="Unpaid">{t('kanban.unpaid')}</GlowingBadge>{/if}
+										{#if features.showBillingAndPayments && ticket.unpaid}<GlowingBadge status="Unpaid">{t('kanban.unpaid')}</GlowingBadge>{/if}
 										{#if ticket.blocked}<GlowingBadge status="Cancelled">{t('kanban.blocked')}</GlowingBadge>{/if}
 										{#if ticket.overdue}<GlowingBadge status="Unpaid">{t('kanban.overdue')}</GlowingBadge>{/if}
 									</div>
@@ -1046,10 +1053,10 @@
 	<p class="text-xs text-secondary line-clamp-2 mt-0.5">
 		<span class="font-medium text-ink/80">{ticket.customerName}</span> · {ticket.complaint}
 	</p>
-	{#if ticket.waitingApproval || ticket.unpaid || ticket.blocked || ticket.overdue}
+	{#if ticket.waitingApproval || (features.showBillingAndPayments && ticket.unpaid) || ticket.blocked || ticket.overdue}
 		<div class="flex flex-wrap gap-1 my-2">
 			{#if ticket.waitingApproval}<GlowingBadge status="Waiting Approval">{t('kanban.waitingApproval')}</GlowingBadge>{/if}
-			{#if ticket.unpaid}<GlowingBadge status="Unpaid">{t('kanban.unpaid')}</GlowingBadge>{/if}
+			{#if features.showBillingAndPayments && ticket.unpaid}<GlowingBadge status="Unpaid">{t('kanban.unpaid')}</GlowingBadge>{/if}
 			{#if ticket.blocked}<GlowingBadge status="Cancelled">{t('kanban.blocked')}</GlowingBadge>{/if}
 			{#if ticket.overdue}<GlowingBadge status="Unpaid">{t('kanban.overdue')}</GlowingBadge>{/if}
 		</div>

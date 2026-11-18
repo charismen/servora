@@ -5,10 +5,11 @@
 	import Dropdown from '$lib/components/ui/dropdown/Dropdown.svelte';
 	import { can, permissions } from '$lib/auth/permissions';
 	import type { ActionData, PageData } from './$types';
-	import { createTranslator, formatDate } from '$lib/i18n';
+	import { createTranslator, formatDate, resolveTerminology } from '$lib/i18n';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const t = $derived(createTranslator(data.locale));
+	const terms = $derived(resolveTerminology(data.user?.workspace?.terminology, data.locale));
 	const canDeleteTicket = $derived(can(data.user.permissions, permissions.serviceTicketsDelete));
 
 	const priorities = ['Low', 'Normal', 'High', 'Urgent'];
@@ -46,12 +47,12 @@
 </script>
 
 <div class="space-y-lg pb-xl">
-	<PageHeader items={[{ label: t('common.console'), href: '/app' }, { label: t('nav.tickets') }]} title={t('tickets.list.title')} subtitle={t('tickets.list.subtitle')}>
+	<PageHeader items={[{ label: t('common.console'), href: '/app' }, { label: terms.ticketPlural }]} title={terms.ticketPlural} subtitle={t('tickets.list.subtitle')}>
 		{#snippet actions()}
 		{#if can(data.user.permissions, permissions.serviceTicketsWrite)}
 			<a class="px-button-x py-button-y rounded-button font-medium font-body-sm text-body-sm inline-flex items-center gap-2 bg-ink text-white hover:bg-ink/90 active:scale-95 transition-all shadow-xs shrink-0" href="/app/tickets/new">
 				<span class="material-symbols-outlined text-[18px]">add</span>
-				<span>{t('tickets.list.newTicket')}</span>
+				<span>+ {terms.ticketSingular}</span>
 			</a>
 		{/if}
 		{/snippet}
@@ -173,8 +174,8 @@
 				<thead>
 					<tr class="bg-surface-container-low border-b border-stone">
 						<th class="px-md py-4 font-label-caps text-label-caps text-secondary uppercase tracking-wider text-[11px] font-bold">{t('tickets.list.ticketNumber')}</th>
-						<th class="px-md py-4 font-label-caps text-label-caps text-secondary uppercase tracking-wider text-[11px] font-bold">{t('tickets.detail.customer')}</th>
-						<th class="px-md py-4 font-label-caps text-label-caps text-secondary uppercase tracking-wider text-[11px] font-bold hidden md:table-cell">{t('tickets.detail.device')}</th>
+						<th class="px-md py-4 font-label-caps text-label-caps text-secondary uppercase tracking-wider text-[11px] font-bold">{terms.requesterSingular}</th>
+						<th class="px-md py-4 font-label-caps text-label-caps text-secondary uppercase tracking-wider text-[11px] font-bold hidden md:table-cell">{terms.assetSingular}</th>
 						<th class="px-md py-4 font-label-caps text-label-caps text-secondary uppercase tracking-wider text-[11px] font-bold">{t('tickets.detail.status')}</th>
 						<th class="px-md py-4 font-label-caps text-label-caps text-secondary uppercase tracking-wider text-[11px] font-bold hidden sm:table-cell">{t('tickets.detail.priority')}</th>
 						<th class="px-md py-4 font-label-caps text-label-caps text-secondary uppercase tracking-wider text-[11px] font-bold hidden lg:table-cell">{t('tickets.detail.assignedTechnician')}</th>

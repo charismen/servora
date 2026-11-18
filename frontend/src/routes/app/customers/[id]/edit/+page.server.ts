@@ -24,20 +24,32 @@ export const actions: Actions = {
 		const customerId = Number(params.id);
 		const form = await request.formData();
 		const fullName = String(form.get('fullName') ?? '').trim();
+		const requesterType = String(form.get('requesterType') ?? 'Customer').trim() || 'Customer';
 		const phoneNumber = sanitizePhoneNumber(String(form.get('phoneNumber') ?? ''));
 		const emailVal = String(form.get('email') ?? '').trim();
 		const email = emailVal === '' ? undefined : emailVal;
 		const addressVal = String(form.get('address') ?? '').trim();
 		const address = addressVal === '' ? undefined : addressVal;
+		const companyName = String(form.get('companyName') ?? '').trim() || undefined;
+		const departmentName = String(form.get('departmentName') ?? '').trim() || undefined;
+		const departmentCode = String(form.get('departmentCode') ?? '').trim() || undefined;
+		const costCenter = String(form.get('costCenter') ?? '').trim() || undefined;
+		const employeeId = String(form.get('employeeId') ?? '').trim() || undefined;
 		const notesVal = String(form.get('notes') ?? '').trim();
 		const notes = notesVal === '' ? undefined : notesVal;
 		const updatedAt = String(form.get('updatedAt') ?? '') || undefined;
 
 		const payload = {
 			fullName,
+			requesterType,
 			phoneNumber,
 			email,
 			address,
+			companyName,
+			departmentName,
+			departmentCode,
+			costCenter,
+			employeeId,
 			notes,
 			updatedAt
 		};
@@ -45,7 +57,7 @@ export const actions: Actions = {
 		if (!fullName) {
 			return fail(400, { values: payload, messageKey: 'customers.form.fullNameRequired' });
 		}
-		if (!phoneNumber) {
+		if (requesterType === 'Customer' && !phoneNumber) {
 			return fail(400, { values: payload, messageKey: 'customers.form.phoneRequired' });
 		}
 
