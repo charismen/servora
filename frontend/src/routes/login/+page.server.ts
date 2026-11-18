@@ -66,7 +66,7 @@ export const actions: Actions = {
 				path: '/',
 				httpOnly: true,
 				sameSite: 'lax',
-				secure: !dev,
+				secure: url.protocol === 'https:',
 				expires: new Date(result.expiresAt)
 			});
 

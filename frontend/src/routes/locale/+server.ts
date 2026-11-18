@@ -1,8 +1,7 @@
 import { redirect, type RequestHandler } from '@sveltejs/kit';
-import { dev } from '$app/environment';
 import { resolveLocale } from '$lib/i18n';
 
-export const POST: RequestHandler = async ({ request, cookies }) => {
+export const POST: RequestHandler = async ({ request, cookies, url }) => {
 	const form = await request.formData();
 	const locale = resolveLocale(String(form.get('locale') ?? 'en'));
 	const redirectTo = String(form.get('redirectTo') ?? '/');
@@ -11,7 +10,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		path: '/',
 		httpOnly: true,
 		sameSite: 'lax',
-		secure: !dev,
+		secure: url.protocol === 'https:',
 		maxAge: 60 * 60 * 24 * 365
 	});
 

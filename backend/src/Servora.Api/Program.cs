@@ -246,7 +246,9 @@ await app.SeedDatabaseAsync();
 
 if (hangfireEnabled)
 {
-    RecurringJob.AddOrUpdate<PreventiveMaintenanceJob>(
+    using var scope = app.Services.CreateScope();
+    var recurringJobManager = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+    recurringJobManager.AddOrUpdate<PreventiveMaintenanceJob>(
         "preventive-maintenance-scan",
         job => job.ProcessDueSchedulesAsync(CancellationToken.None, null),
         Cron.Hourly);
