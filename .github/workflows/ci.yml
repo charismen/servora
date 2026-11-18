@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore & Build Backend
+        working-directory: backend
+        run: dotnet build Servora.sln --configuration Release
+      - name: Run Unit Tests
+        working-directory: backend
+        run: dotnet test tests/Servora.Api.UnitTests/Servora.Api.UnitTests.csproj --configuration Release --no-build
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Type Check & Build Frontend
+        working-directory: frontend
+        run: |
+          npm run check
+          npm run build

@@ -1,0 +1,40 @@
+export type ShopProfileSettings = {
+	shopName: string;
+	phoneNumber: string;
+	whatsAppNumber: string;
+	email: string;
+	address: string;
+	ticketPrefix: string;
+	ticketDateFormat: string;
+	ticketStartNumber: number;
+	ticketMinDigits: number;
+	currencyCode: 'IDR' | 'USD';
+	receiptFooter: string;
+	inventoryDefaultTaxPercent: number;
+	inventoryRoundingIncrement: number;
+	inventoryDefaultUnit: string;
+	inventoryAllowDecimalQuantity: boolean;
+	inventoryAutoCreateCategoryOnImport: boolean;
+	requirePhotoEvidenceOnIntake: boolean;
+	showPhotoEvidenceOnPublicTracking: boolean;
+	requireApprovalEstimate: boolean;
+	allowUnpaidPickupOverride: boolean;
+	operationalOpenTime?: string;
+	operationalCloseTime?: string;
+	operationalRequiredWorkingDaysPerWeek?: number;
+	operationalRequiredWorkingDaysPerMonth?: number;
+	operationalDefaultBreakMinutes?: number;
+	operationalTimeZone?: string;
+	logoUrl?: string | null;
+	updatedAt?: string | null;
+};
+
+export type PrintTemplateSettings = {
+	termsAndConditions: string;
+	showPhysicalCondition: boolean;
+	showAccessories: boolean;
+	showPhotoNotes: boolean;
+	showQrCode: boolean;
+	showPhoneNumber: boolean;
+	showPaymentSummary: boolean;
+};
