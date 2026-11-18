@@ -61,32 +61,32 @@
 		type="button"
 		onclick={() => (open = !open)}
 		disabled={switching}
-		class="flex w-full items-center justify-between gap-2 rounded-xl border border-stone bg-white px-2.5 py-2 text-left transition hover:border-claytile/50 hover:bg-ash/40"
-		title={t('workspaces.switch')}
+		aria-expanded={open}
+		aria-haspopup="listbox"
+		class="flex w-full items-center {compact ? 'justify-center px-1.5 py-1.5' : 'justify-between gap-2 px-2.5 py-2'} rounded-[10px] border border-stone bg-white text-left transition-colors hover:border-claytile/50 hover:bg-ash/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45 cursor-pointer"
+		title={compact ? `${currentWorkspace.name} — ${t('workspaces.switch')}` : t('workspaces.switch')}
 	>
-		<div class="flex min-w-0 items-center gap-2">
+		<div class="flex min-w-0 items-center {compact ? 'justify-center' : 'gap-2.5'}">
 			<div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink text-xs font-bold text-surface">
 				{currentWorkspace.name.slice(0, 2).toUpperCase()}
 			</div>
 			{#if !compact}
 				<div class="min-w-0 flex-1">
-					<div class="truncate text-xs font-semibold text-ink">{currentWorkspace.name}</div>
-					<div class="flex items-center gap-1.5">
-						<span class="truncate text-[10px] text-slate-500">{currentWorkspace.organizationName}</span>
-					</div>
+					<div class="truncate text-xs font-semibold text-ink leading-tight">{currentWorkspace.name}</div>
+					<div class="truncate text-[10.5px] text-secondary mt-0.5 leading-tight">{currentWorkspace.organizationName}</div>
 				</div>
 			{/if}
 		</div>
 		{#if !compact}
-			<svg class="h-3.5 w-3.5 shrink-0 text-slate-400 transition {open ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
-				<path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
-			</svg>
+			<span class="material-symbols-outlined text-[18px] shrink-0 text-secondary transition-transform duration-150 {open ? 'rotate-180' : ''}">
+				expand_more
+			</span>
 		{/if}
 	</button>
 
 	{#if open}
 		<div class="absolute left-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-stone bg-white p-1.5 shadow-lg">
-			<div class="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+			<div class="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-secondary">
 				{t('workspaces.switch')}
 			</div>
 			<div class="max-h-60 space-y-1 overflow-y-auto">
@@ -94,9 +94,9 @@
 					<button
 						type="button"
 						onclick={() => switchWorkspace(ws.id)}
-						class="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition {ws.id === currentWorkspace.id
+						class="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45 cursor-pointer {ws.id === currentWorkspace.id
 							? 'bg-ash font-semibold text-ink'
-							: 'text-slate-700 hover:bg-ash/50'}"
+							: 'text-ink/85 hover:bg-ash/50'}"
 					>
 						<div class="min-w-0 flex-1">
 							<div class="truncate font-medium text-ink">{ws.name}</div>

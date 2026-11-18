@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { createTranslator, formatCurrency } from '$lib/i18n';
+	import { createTranslator, formatCurrency, resolveBlueprintLabel } from '$lib/i18n';
 	import { toast } from '$lib/stores/toast.svelte';
 	import type { PageData } from './$types';
 
@@ -54,8 +54,8 @@
 				{ label: t('organization.totalDuePm'), value: data.summary.totalDueMaintenanceSchedules }
 			] as stat}
 				<div class="rounded-2xl border border-stone bg-white p-4 shadow-xs">
-					<div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{stat.label}</div>
-					<div class="mt-1 text-2xl font-bold text-ink">{stat.value}</div>
+					<div class="text-[11px] font-semibold uppercase tracking-wide text-secondary">{stat.label}</div>
+					<div class="mt-1 text-2xl font-bold tabular-nums text-ink">{stat.value}</div>
 				</div>
 			{/each}
 		</div>
@@ -64,7 +64,7 @@
 			<h2 class="mb-4 text-sm font-semibold text-ink">{t('organization.workspaceBreakdown')}</h2>
 			<div class="overflow-x-auto">
 				<table class="w-full text-left text-xs">
-					<thead class="border-b border-stone text-[11px] uppercase tracking-wide text-slate-500">
+					<thead class="border-b border-stone text-[11px] uppercase tracking-wide text-secondary">
 						<tr>
 							<th class="pb-2.5 pr-4">{t('onboarding.workspaceName')}</th>
 							<th class="pb-2.5 pr-4">{t('onboarding.step2')}</th>
@@ -76,12 +76,12 @@
 							<th class="pb-2.5 text-right"></th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-stone/60">
+					<tbody class="divide-y divide-stone/60 tabular-nums">
 						{#each data.summary.workspaces as ws (ws.workspaceId)}
 							<tr>
 								<td class="py-3 pr-4">
 									<div class="font-semibold text-ink">{ws.name}</div>
-									<div class="text-[11px] text-slate-400">{ws.industryBlueprintKey}</div>
+									<div class="mt-0.5 text-[11.5px] text-secondary">{resolveBlueprintLabel(ws.industryBlueprintKey, data.locale)}</div>
 								</td>
 								<td class="py-3 pr-4">
 									<span class="rounded-full bg-ash px-2 py-0.5 text-[11px] font-medium text-ink">

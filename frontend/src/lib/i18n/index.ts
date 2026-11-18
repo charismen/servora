@@ -45,6 +45,7 @@ const en: Dictionary = {
 	'nav.expandSidebar': 'Expand sidebar',
 	'nav.openMenu': 'Open menu',
 	'nav.closeMenu': 'Close menu',
+	'nav.staffFallback': 'Staff',
 	'dashboard.recentActivity': 'Recent Activity',
 	'dashboard.latest': 'latest',
 	'dashboard.noActivity': 'No activity recorded yet.',
@@ -1848,6 +1849,12 @@ const en: Dictionary = {
 	'blueprints.title': 'Industry Blueprints, Terminology & Custom Fields',
 	'blueprints.subtitle': 'Tailor operating mode, labels, dynamic asset/ticket fields, and intake inspection checklists for this workspace.',
 	'blueprints.activeBlueprint': 'Active Blueprint',
+	'blueprints.preset.it_computer': 'Laptop & PC Repair',
+	'blueprints.preset.mobile_phone': 'Mobile Phone & Tablet Repair',
+	'blueprints.preset.automotive_vehicle': 'Motorbike & Car Workshop',
+	'blueprints.preset.hvac_ac': 'AC & HVAC Service',
+	'blueprints.preset.facility_internal': 'Facility & Internal Equipment Maintenance',
+	'blueprints.preset.custom': 'Custom / Blank Blueprint',
 	'blueprints.applyBlueprint': 'Apply Blueprint Preset',
 	'blueprints.applied': 'Industry blueprint applied',
 	'blueprints.terminologySaved': 'Operating mode and terminology saved',
@@ -2004,6 +2011,7 @@ const id: Dictionary = {
 	'nav.expandSidebar': 'Buka sidebar',
 	'nav.openMenu': 'Buka menu',
 	'nav.closeMenu': 'Tutup menu',
+	'nav.staffFallback': 'Staf',
 	'dashboard.recentActivity': 'Aktivitas Terbaru',
 	'dashboard.latest': 'terbaru',
 	'dashboard.noActivity': 'Belum ada aktivitas.',
@@ -3807,6 +3815,12 @@ const id: Dictionary = {
 	'blueprints.title': 'Blueprint Industri, Istilah & Field Kustom',
 	'blueprints.subtitle': 'Sesuaikan mode operasi, istilah antarmuka, field dinamis aset/tiket, dan ceklis inspeksi masuk.',
 	'blueprints.activeBlueprint': 'Blueprint Aktif',
+	'blueprints.preset.it_computer': 'Servis Laptop & PC',
+	'blueprints.preset.mobile_phone': 'Servis HP & Tablet',
+	'blueprints.preset.automotive_vehicle': 'Bengkel Motor & Mobil',
+	'blueprints.preset.hvac_ac': 'Servis AC & HVAC',
+	'blueprints.preset.facility_internal': 'Pemeliharaan Fasilitas & Aset Internal',
+	'blueprints.preset.custom': 'Blueprint Kustom / Kosong',
 	'blueprints.applyBlueprint': 'Terapkan Preset Blueprint',
 	'blueprints.applied': 'Blueprint industri berhasil diterapkan',
 	'blueprints.terminologySaved': 'Mode operasi dan istilah berhasil disimpan',
@@ -4046,4 +4060,30 @@ export function resolveFeatureConfig(
 				? featureConfig.attachmentTypes
 				: ['FrontView', 'BackView', 'Damage', 'BeforeRepair', 'AfterRepair', 'Receipt', 'Other']
 	};
+}
+
+export function resolveBlueprintLabel(
+	blueprintKey: string | null | undefined,
+	locale: Locale,
+	blueprints?: Array<{ key: string; nameEn: string; nameId: string }> | null
+): string {
+	const normalized = blueprintKey?.trim();
+	if (!normalized) return '—';
+
+	const catalogMatch = blueprints?.find((bp) => bp.key.toLowerCase() === normalized.toLowerCase());
+	if (catalogMatch) {
+		return locale === 'id' ? catalogMatch.nameId : catalogMatch.nameEn;
+	}
+
+	const dictKey = `blueprints.preset.${normalized.toLowerCase()}`;
+	const dict = dictionaries[locale] ?? dictionaries.en;
+	if (dict[dictKey]) {
+		return dict[dictKey];
+	}
+
+	return normalized
+		.split(/[_-]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
 }

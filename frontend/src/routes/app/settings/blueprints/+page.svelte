@@ -3,7 +3,7 @@
 	import { untrack } from 'svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { can, permissions } from '$lib/auth/permissions';
-	import { createTranslator, resolveFeatureConfig } from '$lib/i18n';
+	import { createTranslator, resolveBlueprintLabel, resolveFeatureConfig } from '$lib/i18n';
 	import { toast } from '$lib/stores/toast.svelte';
 	import type { OperatingMode, TerminologyConfig, WorkspaceFeatureConfig } from '$lib/types/auth';
 	import type { ActionData, PageData } from './$types';
@@ -135,7 +135,7 @@
 	<!-- Blueprint Selector -->
 	<form method="POST" action="?/applyBlueprint" use:enhance class="space-y-4 rounded-2xl border border-stone bg-white p-5 shadow-xs">
 		<div class="flex flex-wrap items-center justify-between gap-2">
-			<h2 class="text-sm font-semibold text-ink">{t('blueprints.activeBlueprint')}: <span class="text-claytile">{data.config?.industryBlueprintKey ?? '—'}</span></h2>
+			<h2 class="text-sm font-semibold text-ink">{t('blueprints.activeBlueprint')}: <span class="text-claytile">{resolveBlueprintLabel(data.config?.industryBlueprintKey, data.locale, data.blueprints)}</span></h2>
 		</div>
 		<div class="grid gap-3 md:grid-cols-3">
 			{#each data.blueprints as bp (bp.key)}

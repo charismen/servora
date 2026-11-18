@@ -169,7 +169,6 @@
 		label: string;
 		icon: string;
 		visible: boolean;
-		shortcut?: string;
 	}
 
 	interface NavSection {
@@ -183,9 +182,9 @@
 			id: 'workspace',
 			title: t('nav.sections.workspace'),
 			items: [
-				{ href: '/app', label: t('nav.dashboard'), icon: 'dashboard', visible: true, shortcut: '⌘1' },
-				{ href: '/app/tickets', label: terms.ticketPlural || t('nav.tickets'), icon: 'confirmation_number', visible: can(data.user.permissions, permissions.serviceTicketsRead), shortcut: '⌘2' },
-				{ href: '/app/kanban', label: t('nav.kanban'), icon: 'view_kanban', visible: can(data.user.permissions, permissions.serviceTicketsRead), shortcut: '⌘3' },
+				{ href: '/app', label: t('nav.dashboard'), icon: 'dashboard', visible: true },
+				{ href: '/app/tickets', label: terms.ticketPlural || t('nav.tickets'), icon: 'confirmation_number', visible: can(data.user.permissions, permissions.serviceTicketsRead) },
+				{ href: '/app/kanban', label: t('nav.kanban'), icon: 'view_kanban', visible: can(data.user.permissions, permissions.serviceTicketsRead) },
 				{ href: '/app/maintenance', label: t('nav.maintenance'), icon: 'event_repeat', visible: can(data.user.permissions, permissions.maintenanceRead) }
 			].filter((item) => item.visible)
 		},
@@ -193,17 +192,17 @@
 			id: 'operations',
 			title: t('nav.sections.operations'),
 			items: [
-				{ href: '/app/customers', label: terms.requesterPlural || t('nav.customers'), icon: 'group', visible: can(data.user.permissions, permissions.customersRead), shortcut: '⌘4' },
-				{ href: '/app/inventory', label: t('nav.inventory'), icon: 'inventory_2', visible: can(data.user.permissions, permissions.inventoryRead), shortcut: '⌘5' },
-				{ href: '/app/assets', label: t('nav.assets'), icon: 'precision_manufacturing', visible: can(data.user.permissions, permissions.assetsRead), shortcut: '⌘6' }
+				{ href: '/app/customers', label: terms.requesterPlural || t('nav.customers'), icon: 'group', visible: can(data.user.permissions, permissions.customersRead) },
+				{ href: '/app/inventory', label: t('nav.inventory'), icon: 'inventory_2', visible: can(data.user.permissions, permissions.inventoryRead) },
+				{ href: '/app/assets', label: t('nav.assets'), icon: 'precision_manufacturing', visible: can(data.user.permissions, permissions.assetsRead) }
 			].filter((item) => item.visible)
 		},
 		{
 			id: 'staff',
 			title: t('nav.sections.staff'),
 			items: [
-				{ href: '/app/attendance', label: t('nav.attendance'), icon: 'schedule', visible: can(data.user.permissions, permissions.attendanceRead), shortcut: '⌘6' },
-				{ href: '/app/payroll', label: t('nav.payroll'), icon: 'payments', visible: can(data.user.permissions, permissions.payrollRead), shortcut: '⌘7' }
+				{ href: '/app/attendance', label: t('nav.attendance'), icon: 'schedule', visible: can(data.user.permissions, permissions.attendanceRead) },
+				{ href: '/app/payroll', label: t('nav.payroll'), icon: 'payments', visible: can(data.user.permissions, permissions.payrollRead) }
 			].filter((item) => item.visible)
 		},
 		{
@@ -211,14 +210,25 @@
 			title: t('nav.sections.insights'),
 			items: [
 				{ href: '/app/organization', label: t('nav.organization'), icon: 'corporate_fare', visible: canViewOrg },
-				{ href: '/app/reports', label: t('nav.reports'), icon: 'assessment', visible: can(data.user.permissions, permissions.reportsRead), shortcut: '⌘8' },
-				{ href: '/app/activity', label: t('nav.activity'), icon: 'feed', visible: can(data.user.permissions, permissions.reportsRead), shortcut: '⌘9' },
+				{ href: '/app/reports', label: t('nav.reports'), icon: 'assessment', visible: can(data.user.permissions, permissions.reportsRead) },
+				{ href: '/app/activity', label: t('nav.activity'), icon: 'feed', visible: can(data.user.permissions, permissions.reportsRead) },
 				{ href: '/app/users-roles', label: t('nav.usersRoles'), icon: 'manage_accounts', visible: can(data.user.permissions, permissions.settingsRead) },
 				{ href: '/app/settings/blueprints', label: t('nav.blueprints'), icon: 'tune', visible: can(data.user.permissions, permissions.settingsRead) },
-				{ href: '/app/settings', label: t('nav.settings'), icon: 'settings', visible: can(data.user.permissions, permissions.settingsRead), shortcut: '⌘,' }
+				{ href: '/app/settings', label: t('nav.settings'), icon: 'settings', visible: can(data.user.permissions, permissions.settingsRead) }
 			].filter((item) => item.visible)
 		}
 	].filter((section) => section.items.length > 0));
+
+	// Longest segment-boundary match prevents child items like /app/settings/blueprints from also activating /app/settings.
+	const activeNavHref = $derived.by(() => {
+		const pathname = $page.url.pathname;
+		const allHrefs = navSections.flatMap((section) => section.items.map((item) => item.href));
+		const matches = allHrefs.filter(
+			(href) => pathname === href || (href !== '/app' && pathname.startsWith(`${href}/`))
+		);
+		matches.sort((a, b) => b.length - a.length);
+		return matches[0] ?? null;
+	});
 
 	$effect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -323,26 +333,26 @@
 {/if}
 
 <!-- Sidebar Navigation Shell -->
-<aside class="fixed top-0 bottom-0 z-50 flex flex-col p-3 gap-2 bg-surface-container-lowest border-r border-stone transition-all duration-200 ease-in-out
-	w-[248px] lg:h-screen {mobileOpen ? 'left-0' : 'left-[-248px]'} lg:left-0 {sidebarOpen ? 'lg:w-[248px] lg:p-3' : 'lg:w-[80px] lg:px-2.5 lg:py-3'}"
+<aside class="fixed top-0 bottom-0 z-50 flex flex-col gap-2.5 bg-surface-container-lowest border-r border-stone transition-all duration-200 ease-in-out select-none
+	w-[248px] lg:h-screen {mobileOpen ? 'left-0' : 'left-[-248px]'} lg:left-0 {sidebarOpen ? 'lg:w-[248px] p-3' : 'lg:w-[80px] p-3 lg:px-2.5 lg:py-3'}"
 >
 	<!-- Brand Identity Header -->
-	<div class="px-1.5 py-1.5 mb-1 flex items-center justify-between {isSidebarExpanded ? 'lg:items-center lg:justify-between' : 'lg:flex-col lg:items-center lg:gap-2.5'} gap-2 border-b border-stone/60 pb-3">
+	<div class="{isSidebarExpanded ? 'px-2.5 flex items-center justify-between' : 'px-1 lg:flex lg:flex-col lg:items-center lg:gap-2.5 flex items-center justify-between'} gap-2 border-b border-stone/70 pt-1 pb-3">
 		<div class="min-w-0 {isSidebarExpanded ? 'lg:flex' : 'lg:hidden'} flex items-center gap-2.5">
-			<div class="w-8 h-8 rounded-lg bg-surface-container-low border border-stone/80 flex items-center justify-center p-1 shrink-0 shadow-2xs">
+			<div class="w-8 h-8 rounded-[9px] bg-surface-container-low border border-stone/80 flex items-center justify-center p-1 shrink-0 shadow-2xs">
 				<img src={logo} alt="" class="w-5 h-5 object-contain" />
 			</div>
 			<div class="min-w-0">
 				<div class="flex items-center gap-1.5">
-					<h1 class="font-subheading text-ink font-bold text-[14.5px] leading-tight truncate tracking-tight">{brandName}</h1>
+					<span class="font-subheading text-ink font-bold text-[14.5px] leading-tight truncate tracking-tight">{brandName}</span>
 					<span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" title={t('nav.statusOnline')}></span>
 				</div>
-				<p class="font-label-caps text-secondary text-[10px] uppercase tracking-wider truncate mt-0.5">{t('nav.managementConsole')}</p>
+				<p class="font-label-caps text-secondary text-[10px] font-medium uppercase tracking-[0.06em] truncate mt-0.5">{t('nav.managementConsole')}</p>
 			</div>
 		</div>
 		{#if !isSidebarExpanded}
 			<div class="relative group hidden lg:block">
-				<div class="w-9 h-9 rounded-lg bg-surface-container-low border border-stone/80 flex items-center justify-center p-1.5 shrink-0 shadow-2xs">
+				<div class="w-9 h-9 rounded-[10px] bg-surface-container-low border border-stone/80 flex items-center justify-center p-1.5 shrink-0 shadow-2xs">
 					<img src={logo} alt={brandName} class="w-5 h-5 object-contain" />
 				</div>
 				<!-- Floating Tooltip for Logo in Collapsed Mode -->
@@ -354,7 +364,7 @@
 		{/if}
 		<!-- Desktop Toggle Button -->
 		<button
-			class="hidden lg:flex w-7 h-7 rounded-md border border-stone bg-white text-secondary hover:text-ink hover:bg-ash transition-all items-center justify-center shrink-0 cursor-pointer shadow-2xs hover:scale-105 active:scale-95"
+			class="hidden lg:flex w-7 h-7 rounded-md border border-stone bg-white text-secondary hover:text-ink hover:bg-ash transition-colors items-center justify-center shrink-0 cursor-pointer shadow-2xs active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45"
 			type="button"
 			aria-label={sidebarOpen ? t('nav.collapseSidebar') : t('nav.expandSidebar')}
 			title={(sidebarOpen ? t('nav.collapseSidebar') : t('nav.expandSidebar')) + ' ( [ )'}
@@ -364,7 +374,7 @@
 		</button>
 		<!-- Mobile Close Button -->
 		<button
-			class="lg:hidden w-8 h-8 rounded-lg border border-stone bg-white text-secondary hover:text-ink hover:bg-ash transition-colors flex items-center justify-center shrink-0 cursor-pointer shadow-2xs"
+			class="lg:hidden w-8 h-8 rounded-lg border border-stone bg-white text-secondary hover:text-ink hover:bg-ash transition-colors flex items-center justify-center shrink-0 cursor-pointer shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45"
 			type="button"
 			aria-label={t('nav.closeMenu')}
 			onclick={() => mobileOpen = false}
@@ -375,7 +385,7 @@
 
 	<!-- Workspace Switcher -->
 	{#if data.user.workspace}
-		<div class="px-1">
+		<div class="px-0">
 			<WorkspaceSwitcher
 				currentWorkspace={data.user.workspace}
 				accessibleWorkspaces={data.user.accessibleWorkspaces ?? []}
@@ -387,50 +397,41 @@
 	{/if}
 
 	<!-- Main Grouped Navigation Items -->
-	<nav class="flex-grow flex flex-col gap-2.5 overflow-y-auto overflow-x-hidden custom-scrollbar pr-0.5">
-		{#each navSections as section, sIdx}
-			<div class="space-y-0.5">
+	<nav aria-label={t('nav.primary')} class="flex-1 min-h-0 flex flex-col gap-3.5 overflow-y-auto overflow-x-hidden custom-scrollbar pr-0.5 py-0.5">
+		{#each navSections as section, sIdx (section.id)}
+			<div>
 				{#if isSidebarExpanded}
-					<div class="px-2 pt-1.5 pb-0.5 flex items-center justify-between">
-						<span class="font-label-caps text-secondary/80 uppercase text-[10px] font-bold tracking-wider">
+					<div class="px-2.5 pb-1 flex items-center">
+						<span class="font-label-caps text-secondary uppercase text-[10.5px] font-semibold tracking-[0.07em] leading-none">
 							{section.title}
 						</span>
 					</div>
 				{:else if sIdx > 0}
-					<div class="my-1.5 border-t border-stone/60 mx-1"></div>
+					<div class="my-1.5 border-t border-stone/70 mx-2"></div>
 				{/if}
 
 				<div class="space-y-0.5">
-					{#each section.items as item}
-						{@const isActive = $page.url.pathname === item.href || ($page.url.pathname.startsWith(item.href) && item.href !== '/app')}
+					{#each section.items as item (item.href)}
+						{@const isActive = activeNavHref === item.href}
 						<a
-							class="relative group flex items-center {isSidebarExpanded ? 'justify-start gap-2.5 px-2.5' : 'justify-center px-1.5'} py-2 rounded-lg duration-150 ease-out transition-all
-								{isActive 
-									? 'bg-ink text-white font-semibold shadow-xs' 
-									: 'text-secondary hover:text-ink hover:bg-ash/80 active:scale-[0.98]'}"
+							class="group relative flex items-center {isSidebarExpanded ? 'justify-start gap-2.5 px-2.5' : 'justify-center px-1.5'} min-h-[38px] py-1.5 rounded-[10px] duration-150 ease-out transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45 focus-visible:ring-offset-1
+								{isActive
+									? 'bg-ink text-white font-semibold shadow-xs'
+									: 'text-secondary font-medium hover:text-ink hover:bg-ash active:bg-stone/60'}"
 							href={item.href}
 							onclick={() => { mobileOpen = false; }}
 							aria-label={item.label}
+							aria-current={isActive ? 'page' : undefined}
+							title={!isSidebarExpanded ? item.label : undefined}
 						>
-							{#if isActive && isSidebarExpanded}
-								<span class="absolute -left-1.5 top-1/2 -translate-y-1/2 w-1 h-3.5 bg-white rounded-r-full shadow-2xs"></span>
-							{/if}
-							<span 
-								class="material-symbols-outlined text-[20px] transition-transform duration-150 group-hover:scale-105 shrink-0 {isActive ? 'text-white' : 'text-secondary group-hover:text-ink'}" 
+							<span
+								class="material-symbols-outlined text-[19px] leading-none transition-transform duration-150 shrink-0 {isActive ? 'text-white' : 'text-secondary group-hover:text-ink group-hover:scale-105'}"
 								style={isActive ? "font-variation-settings: 'FILL' 1;" : ""}
 							>
 								{item.icon}
 							</span>
 							{#if isSidebarExpanded}
-								<span class="font-body-sm block truncate text-[13.5px] tracking-tight">{item.label}</span>
-							{:else}
-								<!-- Floating Tooltip in Collapsed Mode -->
-								<div class="hidden lg:flex absolute left-full ml-3 px-2.5 py-1.5 bg-ink text-white text-[12px] font-medium rounded-md shadow-xl pointer-events-none opacity-0 group-hover:opacity-100 -translate-x-1 group-hover:translate-x-0 transition-all duration-150 whitespace-nowrap z-50 items-center gap-2 border border-white/10">
-									<span class="leading-none">{item.label}</span>
-									{#if item.shortcut}
-										<kbd class="text-[9.5px] font-mono text-lead bg-white/15 px-1 py-0.5 rounded leading-none">{item.shortcut}</kbd>
-									{/if}
-								</div>
+								<span class="block truncate text-[13.5px] leading-snug tracking-[-0.01em]">{item.label}</span>
 							{/if}
 						</a>
 					{/each}
@@ -440,7 +441,7 @@
 	</nav>
 
 	<!-- Mobile-only Locale Selector in Sidebar -->
-	<div class="lg:hidden px-sm mb-sm">
+	<div class="lg:hidden px-0 mb-1">
 		<form bind:this={sidebarFormEl} method="POST" action="/locale" class="w-full">
 			<input type="hidden" name="redirectTo" value={$page.url.pathname + $page.url.search} />
 			<label class="sr-only" for="sidebar-locale">{t('locale.label')}</label>
@@ -454,10 +455,10 @@
 	</div>
 
 	<!-- Sidebar Footer: Profile -->
-	<div class="mt-auto border-t border-stone/70 pt-2 px-sm relative {isSidebarExpanded ? 'lg:px-sm' : 'lg:px-0'}" use:clickOutside>
+	<div class="mt-auto border-t border-stone/70 pt-2.5 px-0 relative" use:clickOutside>
 		<!-- Popover Menu -->
 		{#if profileOpen}
-			<div transition:fade={{ duration: 150 }} class="absolute bottom-16 left-2 right-2 max-w-[232px] sm:left-sm sm:w-64 z-50 bg-white border border-stone rounded-xl shadow-xl p-md space-y-md select-none">
+			<div transition:fade={{ duration: 150 }} class="absolute bottom-16 left-0 right-0 max-w-[232px] sm:w-64 z-50 bg-white border border-stone rounded-xl shadow-xl p-md space-y-md select-none">
 				<div class="border-b border-stone pb-sm">
 					<p class="font-body-sm font-semibold text-primary truncate leading-none mb-1">{data.user.fullName || data.user.email}</p>
 					<p class="text-[11px] text-secondary truncate">{data.user.email}</p>
@@ -469,23 +470,31 @@
 				</div>
 				<div class="space-y-xs">
 					{#if can(data.user.permissions, permissions.settingsRead)}
-						<a href="/app/users-roles" class="flex items-center gap-sm px-md py-sm rounded-lg text-body-sm text-secondary hover:bg-ash/50 hover:text-primary transition-all cursor-pointer" onclick={() => { profileOpen = false; mobileOpen = false; }}>
+						<a
+							href="/app/users-roles"
+							class="flex items-center gap-sm px-md py-sm rounded-lg text-body-sm transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45 {activeNavHref === '/app/users-roles' ? 'bg-ash font-semibold text-ink' : 'text-secondary hover:bg-ash/60 hover:text-primary'}"
+							onclick={() => { profileOpen = false; mobileOpen = false; }}
+						>
 							<span class="material-symbols-outlined text-[18px]">manage_accounts</span>
 							<span>{t('nav.usersRoles')}</span>
 						</a>
-						<a href="/app/settings" class="flex items-center gap-sm px-md py-sm rounded-lg text-body-sm text-secondary hover:bg-ash/50 hover:text-primary transition-all cursor-pointer" onclick={() => { profileOpen = false; mobileOpen = false; }}>
+						<a
+							href="/app/settings"
+							class="flex items-center gap-sm px-md py-sm rounded-lg text-body-sm transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45 {activeNavHref === '/app/settings' ? 'bg-ash font-semibold text-ink' : 'text-secondary hover:bg-ash/60 hover:text-primary'}"
+							onclick={() => { profileOpen = false; mobileOpen = false; }}
+						>
 							<span class="material-symbols-outlined text-[18px]">settings</span>
 							<span>{t('nav.settings')}</span>
 						</a>
 					{/if}
-					<button type="button" class="w-full flex items-center gap-sm px-md py-sm rounded-lg text-body-sm text-secondary hover:bg-ash/50 hover:text-primary transition-all cursor-pointer text-left" onclick={() => { profileOpen = false; alert(t('app.helpComingSoon')); }}>
+					<button type="button" class="w-full flex items-center gap-sm px-md py-sm rounded-lg text-body-sm text-secondary hover:bg-ash/60 hover:text-primary transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45" onclick={() => { profileOpen = false; alert(t('app.helpComingSoon')); }}>
 						<span class="material-symbols-outlined text-[18px]">help</span>
 						<span>{t('common.help')}</span>
 					</button>
 				</div>
 				<div class="border-t border-stone pt-sm">
 					<form method="POST" action="/logout" class="w-full">
-						<button class="w-full flex items-center gap-sm px-md py-sm rounded-lg text-body-sm text-error hover:bg-error/5 transition-all cursor-pointer text-left font-semibold" type="submit" onclick={() => isLoggingOut = true}>
+						<button class="w-full flex items-center gap-sm px-md py-sm rounded-lg text-body-sm text-error hover:bg-error/5 transition-colors cursor-pointer text-left font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error/40" type="submit" onclick={() => isLoggingOut = true}>
 							<span class="material-symbols-outlined text-[18px]">logout</span>
 							<span>{t('nav.signOut')}</span>
 						</button>
@@ -495,10 +504,12 @@
 		{/if}
 
 		<!-- Profile Trigger Card -->
-		<button 
+		<button
 			type="button"
 			onclick={() => profileOpen = !profileOpen}
-			class="w-full flex items-center {isSidebarExpanded ? 'gap-2.5 p-2' : 'justify-center p-1.5'} rounded-lg border border-transparent hover:bg-ash/70 hover:border-stone/60 active:scale-[0.98] transition-all text-left cursor-pointer overflow-hidden group relative"
+			aria-expanded={profileOpen}
+			aria-haspopup="menu"
+			class="w-full flex items-center {isSidebarExpanded ? 'gap-2.5 px-2.5 py-2' : 'justify-center p-1.5'} rounded-[10px] border border-transparent hover:bg-ash hover:border-stone/60 active:scale-[0.98] transition-all text-left cursor-pointer overflow-hidden group relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45"
 			title={isSidebarExpanded ? undefined : (data.user.fullName || data.user.email)}
 		>
 			<div class="relative shrink-0">
@@ -510,7 +521,7 @@
 			{#if isSidebarExpanded}
 				<div class="overflow-hidden flex flex-col flex-1 min-w-0">
 					<span class="font-body-sm font-semibold text-ink text-[13px] truncate leading-tight">{data.user.fullName || data.user.email}</span>
-					<span class="font-label-caps text-[9.5px] text-secondary uppercase tracking-wider truncate mt-0.5">{data.user.roles[0] || 'Staff'}</span>
+					<span class="font-label-caps text-[10px] text-secondary uppercase tracking-[0.06em] truncate mt-0.5">{data.user.roles[0] || t('nav.staffFallback')}</span>
 				</div>
 				<span class="material-symbols-outlined text-secondary group-hover:text-ink text-[18px] shrink-0 transition-transform duration-200 {profileOpen ? 'rotate-180' : ''}">
 					unfold_more
@@ -519,7 +530,7 @@
 				<!-- Floating Tooltip for Profile in Collapsed Mode -->
 				<div class="hidden lg:flex absolute left-full ml-3 px-2.5 py-1.5 bg-ink text-white text-[12px] font-medium rounded-md shadow-xl pointer-events-none opacity-0 group-hover:opacity-100 -translate-x-1 group-hover:translate-x-0 transition-all duration-150 whitespace-nowrap z-50 items-center gap-1.5 border border-white/10">
 					<span class="leading-none">{data.user.fullName || data.user.email}</span>
-					<span class="text-[10px] text-lead uppercase font-mono">({data.user.roles[0] || 'Staff'})</span>
+					<span class="text-[10px] text-lead uppercase font-mono">({data.user.roles[0] || t('nav.staffFallback')})</span>
 				</div>
 			{/if}
 		</button>
