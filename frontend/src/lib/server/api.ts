@@ -90,6 +90,10 @@ function extractErrorMessage(payload: unknown): string {
 				return payload;
 			}
 		}
+		if (trimmed.startsWith('<')) {
+			const titleMatch = /<title[^>]*>([^<]+)<\/title>/i.exec(trimmed);
+			return titleMatch?.[1]?.trim() ?? '';
+		}
 		return payload;
 	}
 	if (!payload || typeof payload !== 'object') return '';

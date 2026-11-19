@@ -682,6 +682,16 @@ public static class ServiceTicketEndpoints
     {
         if (string.IsNullOrWhiteSpace(request.Complaint)) return Results.BadRequest("Complaint is required.");
         if (!TryParsePriority(request.Priority, out var priority)) return Results.BadRequest("Invalid priority.");
+        var lengthErrors = ValidateTicketLengths(
+            request.Complaint,
+            request.InitialDiagnosis,
+            request.SecurityPasscode,
+            request.SecurityPattern,
+            departmentCode: request.DepartmentCode,
+            costCenter: request.CostCenter,
+            siteAddressSnapshot: request.SiteAddressSnapshot,
+            newDevice: request.NewDevice);
+        if (lengthErrors.Count > 0) return Results.BadRequest(lengthErrors[0].Message);
 
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         if (await IsSettingEnabledAsync(context, shopId, ShopProfileSettingKeys.RequirePhotoEvidenceOnIntake, cancellationToken) && request.IntakePhotoCount <= 0)
@@ -1541,10 +1551,11 @@ public static class ServiceTicketEndpoints
         ClaimsPrincipal principal,
         CancellationToken cancellationToken)
     {
+        var normalizedMime = (file.ContentType ?? string.Empty).Split(';')[0].Trim();
         var validationErrors = new List<(string Field, string Message)>();
         if (file.Length == 0) validationErrors.Add(("file", "File is required."));
         if (file.Length > 5 * 1024 * 1024) validationErrors.Add(("file", "File must be 5MB or smaller."));
-        if (!AllowedAttachmentMimeTypes.Contains(file.ContentType)) validationErrors.Add(("file", "Only JPEG, PNG, or WEBP images are allowed."));
+        if (!AllowedAttachmentMimeTypes.Contains(normalizedMime)) validationErrors.Add(("file", "Only JPEG, PNG, or WEBP images are allowed."));
         if (validationErrors.Count > 0) return Validation(validationErrors);
         var rawAttachmentType = attachmentType ?? (httpRequest.HasFormContentType ? httpRequest.Form["attachmentType"].FirstOrDefault() : null);
         if (!Enum.TryParse<ServiceTicketAttachmentType>(rawAttachmentType, true, out var parsedType)) parsedType = ServiceTicketAttachmentType.Other;
@@ -1561,7 +1572,9 @@ public static class ServiceTicketEndpoints
 
         var uploadRoot = AttachmentRoot();
         Directory.CreateDirectory(uploadRoot);
-        var storedFileName = $"{Guid.NewGuid():N}{AllowedAttachmentExtensions[file.ContentType]}";
+        var extension = AllowedAttachmentExtensions[normalizedMime];
+        var safeFileName = TruncateFileName(Path.GetFileName(file.FileName), extension, 255);
+        var storedFileName = $"{Guid.NewGuid():N}{extension}";
         var path = Path.Combine(uploadRoot, storedFileName);
         try
         {
@@ -1574,16 +1587,16 @@ public static class ServiceTicketEndpoints
             {
                 ShopId = shopId,
                 ServiceTicketId = id,
-                FileName = Path.GetFileName(file.FileName),
+                FileName = safeFileName,
                 StoredFileName = storedFileName,
-                MimeType = file.ContentType,
+                MimeType = normalizedMime,
                 FileSize = file.Length,
                 AttachmentType = parsedType,
                 IsPublicVisible = rawIsPublic ?? false,
                 UploadedByUserId = GetUserId(principal)
             });
             await context.SaveChangesAsync(cancellationToken);
-            await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Attachment uploaded: {file.FileName}", cancellationToken: cancellationToken);
+            await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Attachment uploaded: {safeFileName}", cancellationToken: cancellationToken);
         }
         catch
         {
@@ -1678,6 +1691,17 @@ public static class ServiceTicketEndpoints
         if (string.IsNullOrWhiteSpace(request.Complaint)) validationErrors.Add(("complaint", "Complaint is required."));
         if (!TryParsePriority(request.Priority, out var priority)) validationErrors.Add(("priority", "Invalid priority."));
         if (request.CreatedAt.HasValue && request.CreatedAt.Value > DateTimeOffset.UtcNow.AddDays(1)) validationErrors.Add(("createdAt", "Intake date cannot be in the future."));
+        validationErrors.AddRange(ValidateTicketLengths(
+            request.Complaint,
+            request.InitialDiagnosis,
+            request.SecurityPasscode,
+            request.SecurityPattern,
+            request.Diagnosis,
+            request.RepairNotes,
+            request.WarrantyTerms,
+            request.DepartmentCode,
+            request.CostCenter,
+            request.SiteAddressSnapshot));
         if (validationErrors.Count > 0) return Validation(validationErrors);
 
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
@@ -3368,6 +3392,64 @@ public static class ServiceTicketEndpoints
         => Enum.TryParse(value, true, out result) && Enum.IsDefined(result);
 
     private static string? TrimOrNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static List<(string Field, string Message)> ValidateTicketLengths(
+        string? complaint,
+        string? initialDiagnosis,
+        string? securityPasscode,
+        string? securityPattern,
+        string? diagnosis = null,
+        string? repairNotes = null,
+        string? warrantyTerms = null,
+        string? departmentCode = null,
+        string? costCenter = null,
+        string? siteAddressSnapshot = null,
+        NewTicketDeviceRequest? newDevice = null)
+    {
+        var errors = new List<(string Field, string Message)>();
+        CheckMaxLength(errors, "complaint", complaint, 2000, "Complaint");
+        CheckMaxLength(errors, "initialDiagnosis", initialDiagnosis, 2000, "Initial diagnosis");
+        CheckMaxLength(errors, "securityPasscode", securityPasscode, 200, "Security passcode");
+        CheckMaxLength(errors, "securityPattern", securityPattern, 100, "Security pattern");
+        CheckMaxLength(errors, "diagnosis", diagnosis, 4000, "Diagnosis");
+        CheckMaxLength(errors, "repairNotes", repairNotes, 4000, "Repair notes");
+        CheckMaxLength(errors, "warrantyTerms", warrantyTerms, 1000, "Warranty terms");
+        CheckMaxLength(errors, "departmentCode", departmentCode, 50, "Department code");
+        CheckMaxLength(errors, "costCenter", costCenter, 60, "Cost center");
+        CheckMaxLength(errors, "siteAddressSnapshot", siteAddressSnapshot, 500, "Site address");
+
+        if (newDevice is not null)
+        {
+            CheckMaxLength(errors, "newDevice.deviceType", newDevice.DeviceType, 80, "Asset category");
+            CheckMaxLength(errors, "newDevice.brand", newDevice.Brand, 80, "Brand");
+            CheckMaxLength(errors, "newDevice.model", newDevice.Model, 120, "Model");
+            CheckMaxLength(errors, "newDevice.serialNumber", newDevice.SerialNumber, 120, "Primary identifier");
+            CheckMaxLength(errors, "newDevice.identifierLabel", newDevice.IdentifierLabel, 150, "Secondary identifier");
+            CheckMaxLength(errors, "newDevice.meterUnit", newDevice.MeterUnit, 30, "Meter unit");
+            CheckMaxLength(errors, "newDevice.notes", newDevice.Notes, 2000, "Asset notes");
+        }
+
+        return errors;
+    }
+
+    private static void CheckMaxLength(List<(string Field, string Message)> errors, string field, string? value, int maxLength, string label)
+    {
+        var trimmed = TrimOrNull(value);
+        if (trimmed is not null && trimmed.Length > maxLength)
+        {
+            errors.Add((field, $"{label} must be {maxLength} characters or fewer."));
+        }
+    }
+
+    private static string TruncateFileName(string? fileName, string fallbackExtension, int maxLength)
+    {
+        var clean = string.IsNullOrWhiteSpace(fileName) ? $"attachment{fallbackExtension}" : fileName.Trim();
+        if (clean.Length <= maxLength) return clean;
+        var ext = Path.GetExtension(clean);
+        if (ext.Length >= maxLength) return clean[..maxLength];
+        var stemLength = maxLength - ext.Length;
+        return $"{clean[..stemLength]}{ext}";
+    }
 
     private static bool IsWarrantyActive(DateTimeOffset? warrantyUntil) => warrantyUntil.HasValue && warrantyUntil.Value >= DateTimeOffset.UtcNow;
 }

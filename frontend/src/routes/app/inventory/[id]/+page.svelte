@@ -1,7 +1,12 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import DeleteConfirmButton from '$lib/components/DeleteConfirmButton.svelte';
+	import InventoryItemModal from '$lib/components/InventoryItemModal.svelte';
 	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import Dropdown from '$lib/components/ui/dropdown/Dropdown.svelte';
+	import StatusBadge from '$lib/components/ui/badge/StatusBadge.svelte';
+	import { can, permissions } from '$lib/auth/permissions';
 	import { createTranslator, formatCurrency, formatDate } from '$lib/i18n';
 	import type { PageData } from './$types';
 
@@ -11,7 +16,19 @@
 	const stock = $derived(data.detail.stock);
 	const pricing = $derived(data.detail.pricing);
 	const currencyCode = $derived(data.shopProfile?.currencyCode ?? 'IDR');
+	const defaultTaxPercent = $derived(data.shopProfile?.inventoryDefaultTaxPercent ?? 11);
+	const roundingIncrement = $derived(Math.max(1, data.shopProfile?.inventoryRoundingIncrement ?? 1000));
+	const defaultUnit = $derived(data.shopProfile?.inventoryDefaultUnit ?? 'pcs');
+	const canWrite = $derived(can(data.user.permissions, permissions.inventoryWrite));
+	const canSeeCost = $derived(can(data.user.permissions, permissions.inventoryCostRead));
+	const canManageItems = $derived(canWrite && canSeeCost);
+	const canDeleteInventory = $derived(can(data.user.permissions, permissions.inventoryDelete));
+	const hasHistory = $derived(data.movements.length > 0 || data.detail.linkedTickets.length > 0);
+	const canDeleteOrDeactivate = $derived(canDeleteInventory && (item.isActive || !hasHistory));
 	const movementTypes = ['StockIn', 'Adjustment', 'Reserve', 'Release', 'Consume', 'Return'];
+
+	let showEditModal = $state(false);
+	let deletingItem = $state(false);
 </script>
 
 <div class="space-y-lg pb-xl">
@@ -21,8 +38,51 @@
 		subtitle={`${item.sku} · ${item.categoryName ?? t('inventory.noCategory')}`}
 	>
 		{#snippet actions()}
-		<a class="button secondary" href={`/app/inventory/${item.id}/label?from=detail`}>{t('inventory.printLabel')}</a>
-		<a class="button secondary" href="/app/inventory">{t('inventory.detail.back')}</a>
+		<div class="flex flex-wrap items-center gap-2">
+			<a class="inline-flex h-9 items-center gap-1.5 rounded-button border border-stone bg-white px-3 text-body-sm font-medium text-ink hover:bg-ash transition-colors shadow-2xs" href={`/app/inventory/${item.id}/label?from=detail`}>
+				<span class="material-symbols-outlined text-[17px]" aria-hidden="true">print</span>
+				<span>{t('inventory.printLabel')}</span>
+			</a>
+			{#if canManageItems}
+				<button
+					type="button"
+					class="inline-flex h-9 items-center gap-1.5 rounded-button border border-stone bg-white px-3.5 text-body-sm font-semibold text-ink hover:bg-ash transition-colors shadow-2xs cursor-pointer"
+					onclick={() => (showEditModal = true)}
+				>
+					<span class="material-symbols-outlined text-[17px]" aria-hidden="true">edit</span>
+					<span>{t('inventory.editItem')}</span>
+				</button>
+			{/if}
+			{#if canDeleteOrDeactivate}
+				<form
+					method="POST"
+					action="?/deleteItem"
+					use:enhance={() => {
+						deletingItem = true;
+						return async ({ update }) => {
+							await update();
+							deletingItem = false;
+						};
+					}}
+				>
+					<DeleteConfirmButton
+						label={hasHistory ? t('inventory.deactivate') : t('common.delete')}
+						confirmLabel={hasHistory ? t('inventory.deactivate') : t('common.delete')}
+						confirmIcon={hasHistory ? 'block' : 'delete'}
+						variant={hasHistory ? 'warning' : 'danger'}
+						confirmTitle={hasHistory ? t('inventory.deactivateItemTitle') : t('inventory.deleteItemPermanentTitle')}
+						confirmMessage={hasHistory ? t('inventory.deactivateItemConfirm') : t('inventory.deleteItemPermanentConfirm')}
+						cancelLabel={t('common.cancel')}
+						icon={hasHistory ? 'block' : 'delete'}
+						disabled={stock.reservedQuantity > 0}
+						submitting={deletingItem}
+						title={stock.reservedQuantity > 0 ? t('inventory.deleteBlockedReserved') : undefined}
+						class="inline-flex h-9 items-center gap-1.5 rounded-button border border-error/30 bg-error/10 px-3 text-body-sm font-semibold text-error hover:bg-error/15 transition-colors shadow-2xs cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+					/>
+				</form>
+			{/if}
+			<a class="inline-flex h-9 items-center rounded-button border border-stone bg-white px-3 text-body-sm font-medium text-secondary hover:text-ink hover:bg-ash transition-colors shadow-2xs" href="/app/inventory">{t('inventory.detail.back')}</a>
+		</div>
 		{/snippet}
 	</PageHeader>
 
@@ -112,8 +172,14 @@
 
 		<aside class="space-y-lg">
 			<section data-bento class="bg-white border border-stone rounded-lg p-lg">
-				<h3 class="font-subheading text-subheading font-semibold text-primary mb-md">{t('inventory.detail.itemInfo')}</h3>
+				<div class="flex items-center justify-between gap-2 mb-md">
+					<h3 class="font-subheading text-subheading font-semibold text-primary">{t('inventory.detail.itemInfo')}</h3>
+					{#if !item.isActive}
+						<StatusBadge variant="neutral" label={t('inventory.inactive')} />
+					{/if}
+				</div>
 				<div class="space-y-sm text-body-sm">
+					<p><span class="text-secondary">{t('inventory.category')}</span><strong class="block text-primary">{item.categoryName ?? t('inventory.noCategory')}</strong></p>
 					<p><span class="text-secondary">{t('inventory.itemType')}</span><strong class="block text-primary">{t(`inventory.itemType.${item.itemType}`)}</strong></p>
 					<p><span class="text-secondary">{t('inventory.condition')}</span><strong class="block text-primary">{t(`inventory.condition.${item.condition}`)}</strong></p>
 					<p><span class="text-secondary">{t('inventory.unit')}</span><strong class="block text-primary">{item.unit}</strong></p>
@@ -122,6 +188,9 @@
 					<p><span class="text-secondary">{t('inventory.location')}</span><strong class="block text-primary">{item.locationNote ?? '-'}</strong></p>
 					<p><span class="text-secondary">{t('inventory.quality')}</span><strong class="block text-primary">{item.quality ?? '-'}</strong></p>
 					<p><span class="text-secondary">{t('inventory.warrantyDays')}</span><strong class="block text-primary">{item.warrantyDays ?? '-'}</strong></p>
+					{#if stock.reservedQuantity > 0 && canDeleteOrDeactivate}
+						<p class="pt-2 text-xs text-secondary border-t border-stone/60">{t('inventory.deleteBlockedReserved')}</p>
+					{/if}
 				</div>
 			</section>
 
@@ -142,3 +211,15 @@
 		</aside>
 	</div>
 </div>
+
+<InventoryItemModal
+	open={showEditModal}
+	{item}
+	categories={data.categories}
+	locale={data.locale}
+	{currencyCode}
+	{defaultTaxPercent}
+	{roundingIncrement}
+	{defaultUnit}
+	onclose={() => (showEditModal = false)}
+/>

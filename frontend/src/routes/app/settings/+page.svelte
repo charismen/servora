@@ -5,7 +5,9 @@
 	import Dropdown from '$lib/components/ui/dropdown/Dropdown.svelte';
 	import TimePicker from '$lib/components/ui/time-picker/TimePicker.svelte';
 	import { createTranslator, locales } from '$lib/i18n';
-	import { apiAssetUrl } from '$lib/media';
+	import { apiAssetUrl, compressImage, isSupportedImageFile } from '$lib/media';
+	import { toast } from '$lib/stores/toast.svelte';
+	import { formatEnhanceUnexpectedError } from '$lib/utils/http';
 	import { handlePhoneInput, handlePhonePaste } from '$lib/utils/phone';
 	import type { ActionData, PageData } from './$types';
 
@@ -126,11 +128,33 @@
 	enctype="multipart/form-data"
 	class="h-full flex flex-col"
 	onsubmit={confirmRiskyChange}
-	use:enhance={() => {
+	use:enhance={async ({ formData, cancel }) => {
+		const logo = formData.get('logo');
+		if (logo instanceof File && logo.size > 0) {
+			if (!isSupportedImageFile(logo)) {
+				toast.error(t('settings.logoInvalidType'));
+				cancel();
+				return;
+			}
+			const compressedLogo = await compressImage(logo, 1024, 0.85, { maxBytes: 700 * 1024, preservePng: true });
+			if (compressedLogo.size > 5 * 1024 * 1024) {
+				toast.error(t('settings.logoTooLarge'));
+				cancel();
+				return;
+			}
+			formData.set('logo', compressedLogo);
+		}
 		saving = true;
-		return async ({ update }) => {
-			await update();
-			saving = false;
+		return async ({ result, update }) => {
+			try {
+				if (result.type === 'error') {
+					toast.error(formatEnhanceUnexpectedError(result.error, t));
+					return;
+				}
+				await update();
+			} finally {
+				saving = false;
+			}
 		};
 	}}
 >
@@ -663,10 +687,17 @@
 						action="?/resetDefaults"
 						use:enhance={() => {
 							resetting = true;
-							return async ({ update }) => {
-								await update();
-								resetting = false;
-								showResetConfirm = false;
+							return async ({ result, update }) => {
+								try {
+									if (result.type === 'error') {
+										toast.error(formatEnhanceUnexpectedError(result.error, t));
+										return;
+									}
+									await update();
+								} finally {
+									resetting = false;
+									showResetConfirm = false;
+								}
 							};
 						}}
 					>

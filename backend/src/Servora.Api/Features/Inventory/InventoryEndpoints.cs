@@ -112,6 +112,7 @@ public static class InventoryEndpoints
     public sealed record AdjustStockRequest(decimal QuantityDelta, string Reason);
     public sealed record ReserveItemRequest(int InventoryItemId, decimal Quantity, string? Notes);
     public sealed record QuantityRequest(decimal? Quantity, string? Reason);
+    public sealed record DeleteItemResultDto(string Action);
     private sealed record InventoryPricingSettings(decimal DefaultTaxPercent, decimal RoundingIncrement, string DefaultUnit);
 
     public static void MapEndpoint(IEndpointRouteBuilder app)
@@ -155,6 +156,11 @@ public static class InventoryEndpoints
             .WithName("UpdateInventoryItem")
             .WithOpenApi()
             .RequireAuthorization(ApplicationPermissions.InventoryWrite);
+
+        app.MapDelete("/inventory/items/{id:int}", DeleteItemAsync)
+            .WithName("DeleteInventoryItem")
+            .WithOpenApi()
+            .RequireAuthorization(ApplicationPermissions.InventoryDelete);
 
         app.MapPost("/inventory/items/{id:int}/stock-in", StockInAsync)
             .WithName("StockInInventoryItem")
@@ -388,7 +394,7 @@ public static class InventoryEndpoints
         return Results.Created($"/api/v1/inventory/items/{item.Id}", new { item.Id });
     }
 
-    private static async Task<IResult> UpdateItemAsync(int id, [FromBody] UpsertItemRequest request, AppDbContext context, IShopContext shopContext, CancellationToken cancellationToken)
+    private static async Task<IResult> UpdateItemAsync(int id, [FromBody] UpsertItemRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, CancellationToken cancellationToken)
     {
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var settings = await GetPricingSettingsAsync(context, shopId, cancellationToken);
@@ -410,9 +416,46 @@ public static class InventoryEndpoints
             return Results.BadRequest("SKU already exists.");
         }
 
+        if (request.CategoryId.HasValue && !await context.InventoryCategories.AnyAsync(category => category.Id == request.CategoryId && category.ShopId == shopId, cancellationToken))
+        {
+            return Results.BadRequest("Category was not found.");
+        }
+
         ApplyItem(item, request, settings);
         await context.SaveChangesAsync(cancellationToken);
+        await activityLogger.LogAsync("InventoryItem", item.Id, "InventoryUpdated", $"Inventory updated: {item.Name}", item.Sku, cancellationToken: cancellationToken);
         return Results.NoContent();
+    }
+
+    private static async Task<IResult> DeleteItemAsync(int id, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, CancellationToken cancellationToken)
+    {
+        var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
+        var item = await context.InventoryItems.FirstOrDefaultAsync(existing => existing.Id == id && existing.ShopId == shopId, cancellationToken);
+        if (item is null) return Results.NotFound();
+
+        if (item.ReservedQuantity > 0)
+        {
+            return Results.BadRequest("Cannot delete or deactivate an item with active ticket reservations.");
+        }
+
+        var hasHistory = await context.InventoryMovements.AnyAsync(movement => movement.ShopId == shopId && movement.InventoryItemId == id, cancellationToken)
+            || await context.TicketInventoryUsages.AnyAsync(usage => usage.ShopId == shopId && usage.InventoryItemId == id, cancellationToken);
+
+        if (hasHistory)
+        {
+            if (item.IsActive)
+            {
+                item.IsActive = false;
+                await context.SaveChangesAsync(cancellationToken);
+                await activityLogger.LogAsync("InventoryItem", item.Id, "InventoryDeactivated", $"Inventory deactivated: {item.Name}", item.Sku, cancellationToken: cancellationToken);
+            }
+            return Results.Ok(new DeleteItemResultDto("deactivated"));
+        }
+
+        context.InventoryItems.Remove(item);
+        await context.SaveChangesAsync(cancellationToken);
+        await activityLogger.LogAsync("InventoryItem", id, "InventoryDeleted", $"Inventory deleted: {item.Name}", item.Sku, cancellationToken: cancellationToken);
+        return Results.Ok(new DeleteItemResultDto("deleted"));
     }
 
     private static async Task<IResult> StockInAsync(int id, [FromBody] StockInRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, CancellationToken cancellationToken)

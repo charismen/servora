@@ -2,6 +2,7 @@
 	import type { ActionData, PageData } from './$types';
 	import { enhance } from '$app/forms';
 	import { createTranslator, locales } from '$lib/i18n';
+	import { formatEnhanceUnexpectedError } from '$lib/utils/http';
 	import { page } from '$app/stores';
 	import { textReveal } from '$lib/components/textReveal';
 	import Dropdown from '$lib/components/ui/dropdown/Dropdown.svelte';
@@ -15,6 +16,8 @@
 	let password = $state('');
 	let showPassword = $state(false);
 	let isSubmitting = $state(false);
+	let unexpectedError = $state('');
+	const displayError = $derived(unexpectedError || form?.message || '');
 
 	$effect(() => {
 		if (form?.email) {
@@ -123,18 +126,26 @@
 				method="POST"
 				use:enhance={() => {
 					isSubmitting = true;
-					return async ({ update }) => {
-						isSubmitting = false;
-						await update();
+					unexpectedError = '';
+					return async ({ result, update }) => {
+						try {
+							if (result.type === 'error') {
+								unexpectedError = formatEnhanceUnexpectedError(result.error, t);
+								return;
+							}
+							await update();
+						} finally {
+							isSubmitting = false;
+						}
 					};
 				}}
 			>
 				<input type="hidden" name="redirectTo" value={form?.redirectTo ?? data.redirectTo} />
 
-				{#if form?.message}
+				{#if displayError}
 					<div class="form-error flex items-center gap-2" role="alert">
 						<span class="material-symbols-outlined text-[16px] shrink-0">error</span>
-						<span>{form.message}</span>
+						<span>{displayError}</span>
 					</div>
 				{/if}
 

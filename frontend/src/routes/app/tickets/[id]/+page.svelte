@@ -15,7 +15,8 @@
 	import CurrencyInput from '$lib/components/CurrencyInput.svelte';
 	import DynamicFieldRenderer from '$lib/components/DynamicFieldRenderer.svelte';
 	import InspectionChecklistRenderer, { type InspectionEntry } from '$lib/components/InspectionChecklistRenderer.svelte';
-	import { compressImage } from '$lib/media';
+	import { compressImage, isSupportedImageFile } from '$lib/media';
+	import { formatEnhanceUnexpectedError } from '$lib/utils/http';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const t = $derived(createTranslator(data.locale));
@@ -456,8 +457,12 @@
 		return () => {
 			pendingAction = actionKey;
 			showPendingNotice(t('tickets.detail.actionPending'));
-			return async ({ update }: { update: (options?: { reset?: boolean; invalidateAll?: boolean }) => Promise<void> }) => {
+			return async ({ result, update }: { result: { type: string; error?: unknown }; update: (options?: { reset?: boolean; invalidateAll?: boolean }) => Promise<void> }) => {
 				try {
+					if (result.type === 'error') {
+						toast.error(formatEnhanceUnexpectedError(result.error, t));
+						return;
+					}
 					await update({ reset: false, invalidateAll: true });
 				} finally {
 					if (pendingAction === actionKey) pendingAction = null;
@@ -473,16 +478,30 @@
 	const addAccessoryForm = preserveTicketDetailForm;
 	let photoFileInput = $state<HTMLInputElement | null>(null);
 
-	const uploadAttachmentForm = async ({ formData }: { formData: FormData }) => {
+	const uploadAttachmentForm = async ({ formData, cancel }: { formData: FormData; cancel: () => void }) => {
 		const file = formData.get('file');
 		if (file instanceof File && file.size > 0) {
+			if (!isSupportedImageFile(file)) {
+				toast.error(t('tickets.attachments.fileTypeInvalid'));
+				cancel();
+				return;
+			}
 			const compressed = await compressImage(file);
+			if (compressed.size > 5 * 1024 * 1024) {
+				toast.error(t('tickets.attachments.fileTooLarge'));
+				cancel();
+				return;
+			}
 			formData.set('file', compressed);
 		}
 		uploadPending = true;
 		showPendingNotice(t('tickets.attachments.uploading'));
-		return async ({ result, update }: { result: { type: string }; update: (options?: { reset?: boolean; invalidateAll?: boolean }) => Promise<void> }) => {
+		return async ({ result, update }: { result: { type: string; error?: unknown }; update: (options?: { reset?: boolean; invalidateAll?: boolean }) => Promise<void> }) => {
 			try {
+				if (result.type === 'error') {
+					toast.error(formatEnhanceUnexpectedError(result.error, t));
+					return;
+				}
 				if (result.type === 'success') {
 					if (photoFileInput) photoFileInput.value = '';
 					await update({ reset: true, invalidateAll: true });
@@ -782,6 +801,7 @@
 							<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.complaint')} *</span>
 							<textarea
 								name="complaint"
+								maxlength="2000"
 								rows="3"
 								class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 								bind:value={detailDraft.complaint}
@@ -794,6 +814,7 @@
 								<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.initialDiagnosis')}</span>
 								<input
 									name="initialDiagnosis"
+									maxlength="2000"
 									class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 									bind:value={detailDraft.initialDiagnosis}
 								/>
@@ -984,6 +1005,7 @@
 										<input
 											type={revealPasscode ? 'text' : 'password'}
 											name="securityPasscode"
+											maxlength="200"
 											class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white pr-20 focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors font-mono"
 											bind:value={detailDraft.securityPasscode}
 											placeholder={t('tickets.security.passcodePlaceholder')}
@@ -1296,6 +1318,7 @@
 								<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.diagnosis')}</span>
 								<textarea
 									name="diagnosis"
+									maxlength="4000"
 									rows="3"
 									class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 									bind:value={detailDraft.diagnosis}
@@ -1307,6 +1330,7 @@
 								<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.repairNotes')}</span>
 								<textarea
 									name="repairNotes"
+									maxlength="4000"
 									rows="3"
 									class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 									bind:value={detailDraft.repairNotes}
@@ -1332,6 +1356,7 @@
 										<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.warrantyTerms')}</span>
 										<textarea
 											name="warrantyTerms"
+											maxlength="1000"
 											rows="2"
 											class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 											bind:value={detailDraft.warrantyTerms}

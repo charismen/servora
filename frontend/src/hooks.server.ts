@@ -11,6 +11,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const hasSession = event.cookies.get('servora_session');
 
 	if (isProtectedRoute && !hasSession) {
+		const isJsonEndpointRequest =
+			event.request.method !== 'GET' &&
+			event.request.headers.get('accept')?.toLowerCase().includes('application/json') &&
+			!event.request.headers.get('x-sveltekit-action');
+		if (isJsonEndpointRequest) {
+			return new Response(
+				JSON.stringify({ messageKey: 'common.sessionExpired', error: 'Unauthorized' }),
+				{ status: 401, headers: { 'content-type': 'application/json' } }
+			);
+		}
 		throw redirect(303, `/login?redirectTo=${encodeURIComponent(event.url.pathname)}`);
 	}
 

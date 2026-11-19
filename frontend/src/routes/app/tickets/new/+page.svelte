@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { onMount, untrack } from 'svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
@@ -8,7 +7,9 @@
 	import PatternLock from '$lib/components/PatternLock.svelte';
 	import DynamicFieldRenderer from '$lib/components/DynamicFieldRenderer.svelte';
 	import InspectionChecklistRenderer, { type InspectionEntry } from '$lib/components/InspectionChecklistRenderer.svelte';
-	import { compressImage } from '$lib/media';
+	import { compressImage, isSupportedImageFile } from '$lib/media';
+	import { formatEnhanceUnexpectedError, parseSafeJsonResponse } from '$lib/utils/http';
+	import { submitActionSafely } from '$lib/utils/form-action';
 	import { sanitizePhoneNumber, handlePhonePaste } from '$lib/utils/phone';
 	import type { ActionData, PageData } from './$types';
 	import { createTranslator, resolveFeatureConfig, resolveTerminology } from '$lib/i18n';
@@ -25,6 +26,11 @@
 	const intakeAssetFields = $derived((data.blueprintConfig?.assetFields ?? []).filter((f) => f.showOnIntake));
 	const intakeTicketFields = $derived((data.blueprintConfig?.ticketFields ?? []).filter((f) => f.showOnIntake));
 	const inspectionTemplates = $derived(data.blueprintConfig?.inspectionChecklists ?? []);
+	const defaultAttachmentType = $derived(
+		features.attachmentTypes.includes('Other')
+			? 'Other'
+			: (features.attachmentTypes[0] ?? 'Other')
+	);
 	let serviceLocationType = $state<'InShop' | 'OnSite' | 'PickupDelivery'>(
 		untrack(() => features.defaultServiceLocationType)
 	);
@@ -35,10 +41,20 @@
 	let showMultiUnitPicker = $state(false);
 	let submitError = $state('');
 	let photoError = $state('');
+	let createdTicketId = $state<number | null>(null);
+	let createdTicketNumber = $state('');
+	let uploadProgressText = $state('');
+	let createTicketFormEl: HTMLFormElement | undefined = $state();
 	const formResult = $derived(form as { message?: string; messageKey?: string } | null | undefined);
 	const activeFormError = $derived(
 		submitError || (formResult?.messageKey ? t(formResult.messageKey) : (formResult?.message ?? ''))
 	);
+
+	function attachmentTypeLabel(value: string) {
+		const key = `tickets.attachmentType.${value}`;
+		const translated = t(key);
+		return translated === key ? value : translated;
+	}
 
 	const todayStr = new Date().toISOString().slice(0, 10);
 	let createdAt = $state(todayStr);
@@ -171,7 +187,10 @@
 		try {
 			const res = await fetch('/app/customers', {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: {
+					'Content-Type': 'application/json',
+					Accept: 'application/json'
+				},
 				body: JSON.stringify({
 					fullName: quickFullName.trim(),
 					requesterType: quickRequesterType,
@@ -186,13 +205,21 @@
 					notes: quickNotes.trim() || undefined
 				})
 			});
-			const json = await res.json();
-			if (!res.ok) {
-				quickError = json.error || t('tickets.create.quickCustomerError');
+			const parsed = await parseSafeJsonResponse<{
+				customer?: (typeof customers)[number];
+				error?: string;
+			}>(res, t);
+			if (!parsed.ok) {
+				quickError = parsed.message || t('tickets.create.quickCustomerError');
 				quickSaving = false;
 				return;
 			}
-			const newCust = json.customer;
+			const newCust = parsed.data.customer;
+			if (!newCust) {
+				quickError = parsed.data.error || t('tickets.create.quickCustomerError');
+				quickSaving = false;
+				return;
+			}
 			customers = [newCust, ...customers];
 			deviceGroups = [{ customerId: newCust.id, devices: [] }, ...deviceGroups];
 			customerId = newCust.id.toString();
@@ -288,17 +315,25 @@
 
 	// Photo upload state & previews
 	let photoFiles = $state<File[]>([]);
-	let photoPreviews = $state<{ id: string; url: string; name: string; size: string; file: File; isPublicVisible: boolean }[]>([]);
+	let photoPreviews = $state<{
+		id: string;
+		url: string;
+		name: string;
+		size: string;
+		file: File;
+		compressedFile?: File;
+		attachmentType: string;
+		isPublicVisible: boolean;
+		uploaded: boolean;
+	}[]>([]);
 	let fileInputRef: HTMLInputElement | undefined = $state();
 	let isDragging = $state(false);
-
-	const supportedImageTypes = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
 
 	function handleFiles(files: FileList | File[] | null) {
 		if (!files) return;
 		photoError = '';
 		for (const file of Array.from(files)) {
-			if (!supportedImageTypes.has(file.type.toLowerCase())) {
+			if (!isSupportedImageFile(file)) {
 				photoError = t('tickets.create.intakePhotoTypeInvalid');
 				continue;
 			}
@@ -310,19 +345,156 @@
 				name: file.name,
 				size: (file.size / 1024).toFixed(0) + ' KB',
 				file,
-				isPublicVisible: true
+				attachmentType: defaultAttachmentType,
+				isPublicVisible: true,
+				uploaded: false
 			});
+		}
+	}
+
+	function scrollToCreateTicketError() {
+		setTimeout(() => {
+			document.getElementById('create-ticket-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}, 0);
+	}
+
+	async function handleCreateTicketSubmit(event: SubmitEvent) {
+		event.preventDefault();
+		if (submitting || !createTicketFormEl) return;
+
+		submitError = '';
+		photoError = '';
+		uploadProgressText = '';
+
+		if (data.requirePhotoEvidenceOnIntake && photoPreviews.length === 0) {
+			photoError = t('tickets.create.intakePhotoRequired');
+			submitError = t('tickets.create.intakePhotoRequired');
+			scrollToCreateTicketError();
+			return;
+		}
+
+		submitting = true;
+		try {
+			for (const preview of photoPreviews) {
+				if (preview.uploaded || preview.compressedFile) continue;
+				const compressed = await compressImage(preview.file);
+				if (compressed.size > 5 * 1024 * 1024) {
+					photoError = t('tickets.create.intakePhotoTooLarge');
+					submitError = t('tickets.create.intakePhotoTooLarge');
+					scrollToCreateTicketError();
+					return;
+				}
+				preview.compressedFile = compressed;
+			}
+
+			if (!createdTicketId) {
+				const metadataFormData = new FormData(createTicketFormEl);
+				metadataFormData.delete('intakePhotos');
+				metadataFormData.delete('intakePhotoVisibility');
+				metadataFormData.delete('intakePhotoTypes');
+				metadataFormData.set('deferAttachments', 'true');
+				metadataFormData.set('intakePhotoCount', String(photoPreviews.length));
+
+				const actionResponse = await submitActionSafely(window.location.href, metadataFormData, t);
+				if (!actionResponse.ok) {
+					submitError = actionResponse.message;
+					scrollToCreateTicketError();
+					return;
+				}
+
+				const result = actionResponse.result;
+				if (result.type === 'redirect') {
+					allowNavigation = true;
+					await goto(result.location);
+					return;
+				}
+				if (result.type === 'failure') {
+					const failureData = result.data as { message?: string; messageKey?: string } | undefined;
+					submitError = failureData?.messageKey
+						? t(failureData.messageKey)
+						: (failureData?.message || t('common.error'));
+					scrollToCreateTicketError();
+					return;
+				}
+				if (result.type === 'success') {
+					const payload = result.data as { ticketId?: number; ticketNumber?: string } | undefined;
+					if (!payload?.ticketId) {
+						submitError = t('common.invalidServerResponse');
+						scrollToCreateTicketError();
+						return;
+					}
+					createdTicketId = payload.ticketId;
+					createdTicketNumber = payload.ticketNumber ?? `#${payload.ticketId}`;
+				}
+			}
+
+			const pendingPhotos = photoPreviews.filter((preview) => !preview.uploaded);
+			for (let i = 0; i < pendingPhotos.length; i++) {
+				const preview = pendingPhotos[i];
+				uploadProgressText = t('tickets.create.uploadingPhoto', {
+					current: i + 1,
+					total: pendingPhotos.length
+				});
+				const fileToUpload = preview.compressedFile ?? preview.file;
+				const uploadBody = new FormData();
+				uploadBody.set('file', fileToUpload);
+				uploadBody.set('attachmentType', preview.attachmentType || defaultAttachmentType);
+				uploadBody.set('isPublicVisible', preview.isPublicVisible ? 'true' : 'false');
+
+				let uploadResponse: Response;
+				try {
+					uploadResponse = await fetch(`/app/tickets/${createdTicketId}/attachments`, {
+						method: 'POST',
+						headers: { Accept: 'application/json' },
+						body: uploadBody
+					});
+				} catch (error) {
+					const reason = formatEnhanceUnexpectedError(error, t);
+					photoError = reason;
+					submitError = t('tickets.create.photoUploadPartial', {
+						ticketNumber: createdTicketNumber || `#${createdTicketId}`,
+						current: i + 1,
+						reason
+					});
+					scrollToCreateTicketError();
+					return;
+				}
+
+				const parsedUpload = await parseSafeJsonResponse(uploadResponse, t);
+				if (!parsedUpload.ok) {
+					photoError = parsedUpload.message;
+					submitError = t('tickets.create.photoUploadPartial', {
+						ticketNumber: createdTicketNumber || `#${createdTicketId}`,
+						current: i + 1,
+						reason: parsedUpload.message
+					});
+					scrollToCreateTicketError();
+					return;
+				}
+				preview.uploaded = true;
+			}
+
+			if (createdTicketId) {
+				allowNavigation = true;
+				await goto(`/app/tickets/${createdTicketId}/receipt`);
+			}
+		} catch (error) {
+			submitError = formatEnhanceUnexpectedError(error, t);
+			scrollToCreateTicketError();
+		} finally {
+			submitting = false;
+			uploadProgressText = '';
 		}
 	}
 
 	function togglePhotoPublicVisibility(id: string) {
 		const item = photoPreviews.find(p => p.id === id);
-		if (item) item.isPublicVisible = !item.isPublicVisible;
+		if (item && !item.uploaded) item.isPublicVisible = !item.isPublicVisible;
 	}
 
 	function removePhoto(id: string) {
 		const idx = photoPreviews.findIndex(p => p.id === id);
-		if (idx !== -1) {
+		if (idx !== -1 && !photoPreviews[idx].uploaded) {
 			URL.revokeObjectURL(photoPreviews[idx].url);
 			photoPreviews.splice(idx, 1);
 			photoFiles.splice(idx, 1);
@@ -374,71 +546,39 @@
 	/>
 
 	<form
+		bind:this={createTicketFormEl}
 		method="POST"
 		enctype="multipart/form-data"
 		class="space-y-lg !overflow-visible relative z-20"
-		use:enhance={async ({ formData, cancel }) => {
-			if (submitting) {
-				cancel();
-				return;
-			}
-			submitError = '';
-			photoError = '';
-			submitting = true;
-			try {
-				formData.delete('intakePhotos');
-				formData.delete('intakePhotoVisibility');
-				for (const preview of photoPreviews) {
-					if (preview.file instanceof File && preview.file.size > 0) {
-						const compressed = await compressImage(preview.file);
-						if (compressed.size > 5 * 1024 * 1024) {
-							photoError = t('tickets.create.intakePhotoTooLarge');
-							submitError = t('tickets.create.intakePhotoTooLarge');
-							submitting = false;
-							cancel();
-							return;
-						}
-						formData.append('intakePhotos', compressed);
-						formData.append('intakePhotoVisibility', preview.isPublicVisible ? 'true' : 'false');
-					}
-				}
-			} catch (err) {
-				submitError = err instanceof Error ? err.message : t('tickets.create.networkError');
-				submitting = false;
-				cancel();
-				return;
-			}
-			return async ({ result, update }) => {
-				if (result.type === 'redirect') {
-					allowNavigation = true;
-					await update();
-					return;
-				}
-				try {
-					if (result.type === 'error') {
-						submitError =
-							(result.error && typeof result.error === 'object' && 'message' in result.error
-								? String(result.error.message)
-								: '') || t('tickets.create.networkError');
-						document.getElementById('create-ticket-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-						return;
-					}
-					await update();
-					if (result.type === 'failure') {
-						document.getElementById('create-ticket-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-					}
-				} finally {
-					submitting = false;
-				}
-			};
-		}}
+		onsubmit={handleCreateTicketSubmit}
 	>
 		<input type="hidden" name="idempotencyKey" value={data.idempotencyKey} />
 
 		{#if activeFormError}
-			<div id="create-ticket-error" class="scroll-mt-24 rounded-xl border border-error/30 bg-error/5 p-4 text-body-sm text-error flex items-start gap-2.5 shadow-2xs" role="alert">
-				<span class="material-symbols-outlined text-[18px] text-error shrink-0 mt-0.5">error</span>
-				<span class="min-w-0 break-words">{activeFormError}</span>
+			<div id="create-ticket-error" class="scroll-mt-24 rounded-xl border border-error/30 bg-error/5 p-4 text-body-sm text-error space-y-2.5 shadow-2xs" role="alert">
+				<div class="flex items-start gap-2.5">
+					<span class="material-symbols-outlined text-[18px] text-error shrink-0 mt-0.5">error</span>
+					<span class="min-w-0 break-words">{activeFormError}</span>
+				</div>
+				{#if createdTicketId}
+					<div class="flex flex-wrap items-center gap-2 pl-7">
+						<button
+							type="button"
+							disabled={submitting}
+							onclick={() => createTicketFormEl?.requestSubmit()}
+							class="px-3 py-1.5 rounded-button bg-ink text-white text-caption font-medium hover:bg-ink/90 disabled:opacity-50 cursor-pointer"
+						>
+							{t('tickets.create.retryPhotoUpload')}
+						</button>
+						<a
+							href={`/app/tickets/${createdTicketId}`}
+							onclick={() => (allowNavigation = true)}
+							class="px-3 py-1.5 rounded-button border border-stone bg-white text-ink text-caption font-medium hover:bg-ash"
+						>
+							{t('tickets.create.openCreatedTicket', { ticket: terms.ticketSingular.toLowerCase(), ticketNumber: createdTicketNumber || `#${createdTicketId}` })}
+						</a>
+					</div>
+				{/if}
 			</div>
 		{/if}
 
@@ -637,6 +777,7 @@
 						<input
 							type="text"
 							name="newDeviceType"
+							maxlength="80"
 							class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 							placeholder={t('tickets.create.deviceTypePlaceholder')}
 							required={deviceMode === 'new'}
@@ -647,6 +788,7 @@
 						<input
 							type="text"
 							name="newDeviceBrand"
+							maxlength="80"
 							bind:value={newDeviceBrand}
 							class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 							placeholder={t('tickets.create.brandPlaceholder')}
@@ -658,6 +800,7 @@
 						<input
 							type="text"
 							name="newDeviceModel"
+							maxlength="120"
 							bind:value={newDeviceModel}
 							class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 							placeholder={t('tickets.create.modelPlaceholder')}
@@ -669,6 +812,7 @@
 						<input
 							type="text"
 							name="newDeviceSerialNumber"
+							maxlength="120"
 							class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 							placeholder={t('tickets.create.serialPlaceholder')}
 						/>
@@ -678,6 +822,7 @@
 						<input
 							type="text"
 							name="newDeviceIdentifierLabel"
+							maxlength="150"
 							class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 							placeholder={t('tickets.create.identifierPlaceholder')}
 						/>
@@ -697,6 +842,7 @@
 						<input
 							type="text"
 							name="newDeviceMeterUnit"
+							maxlength="30"
 							class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 							placeholder="km / hours"
 						/>
@@ -705,6 +851,7 @@
 						<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.create.deviceNotes')}</span>
 						<textarea
 							name="newDeviceNotes"
+							maxlength="2000"
 							rows="2"
 							class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
 							placeholder={t('tickets.create.physicalConditionPlaceholder')}
@@ -751,7 +898,7 @@
 					</label>
 					<label class="space-y-1.5">
 						<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.customSiteAddress')}</span>
-						<input type="text" name="siteAddressSnapshot" class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink" />
+						<input type="text" name="siteAddressSnapshot" maxlength="500" class="w-full border border-stone rounded-input px-3.5 py-2 text-body-sm bg-white focus:outline-none focus:border-ink" />
 					</label>
 					<label class="space-y-1.5">
 						<span class="text-label-caps font-label-caps text-secondary uppercase">{t('fieldService.scheduledStart')}</span>
@@ -778,8 +925,8 @@
 					</label>
 					{#if isInternalWorkOrder}
 						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-							<input type="text" name="departmentCode" placeholder={t('fieldService.departmentCode')} class="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs" />
-							<input type="text" name="costCenter" placeholder={t('fieldService.costCenter')} class="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs" />
+							<input type="text" name="departmentCode" maxlength="50" placeholder={t('fieldService.departmentCode')} class="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs" />
+							<input type="text" name="costCenter" maxlength="60" placeholder={t('fieldService.costCenter')} class="rounded-lg border border-stone bg-white px-3 py-1.5 text-xs" />
 						</div>
 					{/if}
 				</div>
@@ -804,6 +951,7 @@
 				<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.complaint')} *</span>
 				<textarea
 					name="complaint"
+					maxlength="2000"
 					bind:value={complaintText}
 					rows="3"
 					class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
@@ -816,6 +964,7 @@
 				<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.detail.initialDiagnosis')}</span>
 				<textarea
 					name="initialDiagnosis"
+					maxlength="2000"
 					bind:value={initialDiagnosisText}
 					rows="2"
 					class="w-full border border-stone rounded-input p-3 text-body-sm bg-white focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
@@ -929,7 +1078,11 @@
 					accept="image/jpeg,image/png,image/webp"
 					multiple
 					class="sr-only"
-					onchange={(e) => handleFiles((e.currentTarget as HTMLInputElement).files)}
+					onchange={(e) => {
+						const input = e.currentTarget as HTMLInputElement;
+						handleFiles(input.files);
+						input.value = '';
+					}}
 				/>
 
 				<!-- Interactive Dropzone -->
@@ -966,20 +1119,26 @@
 				{#if photoPreviews.length > 0}
 					<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-2">
 						{#each photoPreviews as photo (photo.id)}
-							<div class="relative group rounded-lg border border-stone bg-white p-1.5 shadow-2xs space-y-1">
+							<div class="relative group rounded-lg border border-stone bg-white p-1.5 shadow-2xs space-y-1.5">
 								<div class="relative aspect-video rounded overflow-hidden bg-ash">
 									<img src={photo.url} alt={photo.name} class="w-full h-full object-cover" />
-									<button
-										type="button"
-										class="absolute top-1 right-1 w-6 h-6 rounded-full bg-ink/80 text-white flex items-center justify-center hover:bg-error cursor-pointer transition-colors shadow-xs"
-										onclick={(e) => {
-											e.stopPropagation();
-											removePhoto(photo.id);
-										}}
-										aria-label={t('tickets.create.removePhoto')}
-									>
-										×
-									</button>
+									{#if photo.uploaded}
+										<span class="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold uppercase shadow-xs">
+											{t('tickets.create.photoUploadedBadge')}
+										</span>
+									{:else}
+										<button
+											type="button"
+											class="absolute top-1 right-1 w-6 h-6 rounded-full bg-ink/80 text-white flex items-center justify-center hover:bg-error cursor-pointer transition-colors shadow-xs"
+											onclick={(e) => {
+												e.stopPropagation();
+												removePhoto(photo.id);
+											}}
+											aria-label={t('tickets.create.removePhoto')}
+										>
+											×
+										</button>
+									{/if}
 								</div>
 								<div class="px-1 flex items-center justify-between gap-1 text-[11px] text-secondary" title={photo.name}>
 									<div class="min-w-0">
@@ -988,7 +1147,8 @@
 									</div>
 									<button
 										type="button"
-										class={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase cursor-pointer transition-colors ${photo.isPublicVisible ? 'bg-success/15 text-success hover:bg-success/25' : 'bg-stone/50 text-secondary hover:bg-stone/80'}`}
+										disabled={photo.uploaded}
+										class={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase transition-colors disabled:opacity-60 disabled:cursor-default ${photo.isPublicVisible ? 'bg-success/15 text-success hover:bg-success/25' : 'bg-stone/50 text-secondary hover:bg-stone/80'} ${photo.uploaded ? '' : 'cursor-pointer'}`}
 										onclick={(e) => {
 											e.stopPropagation();
 											togglePhotoPublicVisibility(photo.id);
@@ -998,6 +1158,19 @@
 										{photo.isPublicVisible ? t('tickets.attachments.publicBadge') : t('tickets.attachments.internalBadge')}
 									</button>
 								</div>
+								{#if features.attachmentTypes.length > 1}
+									<select
+										aria-label={t('tickets.create.intakePhotos')}
+										disabled={photo.uploaded}
+										bind:value={photo.attachmentType}
+										onclick={(e) => e.stopPropagation()}
+										class="w-full rounded border border-stone/80 bg-surface px-1.5 py-1 text-[11px] text-ink focus:border-ink focus:outline-none disabled:opacity-60"
+									>
+										{#each features.attachmentTypes as attType (attType)}
+											<option value={attType}>{attachmentTypeLabel(attType)}</option>
+										{/each}
+									</select>
+								{/if}
 							</div>
 						{/each}
 					</div>
@@ -1057,6 +1230,7 @@
 							<input
 								type={showPasscode ? 'text' : 'password'}
 								name="securityPasscode"
+								maxlength="200"
 								autocomplete="new-password"
 								bind:value={securityPasscode}
 								class="w-full border border-stone rounded-input px-3.5 py-2.5 text-body-sm bg-white pr-20 focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-colors"
@@ -1138,7 +1312,9 @@
 							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 							<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 						</svg>
-						<span>{t('tickets.create.submitting')}</span>
+						<span>{uploadProgressText || t('tickets.create.submitting')}</span>
+					{:else if createdTicketId}
+						<span>{t('tickets.create.retryPhotoUpload')}</span>
 					{:else}
 						<span>{t('tickets.create.submit')} — {terms.ticketSingular}</span>
 					{/if}

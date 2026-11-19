@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import DeleteConfirmButton from '$lib/components/DeleteConfirmButton.svelte';
 	import CurrencyInput from '$lib/components/CurrencyInput.svelte';
+	import InventoryItemModal from '$lib/components/InventoryItemModal.svelte';
 	import Dropdown from '$lib/components/ui/dropdown/Dropdown.svelte';
 	import StatusBadge from '$lib/components/ui/badge/StatusBadge.svelte';
 	import { can, permissions } from '$lib/auth/permissions';
@@ -55,10 +57,13 @@
 
 	// Modal States
 	let showAddModal = $state(false);
+	let editingItem = $state<InventoryItem | null>(null);
+	let deletingItemId = $state<number | null>(null);
 	let showCategoriesModal = $state(false);
 	let showImportModal = $state(false);
 	let stockInItem = $state<InventoryItem | null>(null);
 	let adjustStockItem = $state<InventoryItem | null>(null);
+	const itemModalOpen = $derived(showAddModal || editingItem !== null);
 
 	// Auto-open import modal if import preview or results arrive
 	$effect(() => {
@@ -67,23 +72,9 @@
 		}
 	});
 
-	// Pricing Draft State for Add Modal
 	const defaultTaxPercent = $derived(data.shopProfile?.inventoryDefaultTaxPercent ?? 11);
 	const roundingIncrement = $derived(Math.max(1, data.shopProfile?.inventoryRoundingIncrement ?? 1000));
-	let addDraft = $state({ purchasePrice: 0, shippingCost: 0, serviceFee: 0, marginPercent: 0, taxPercent: 11 });
-	$effect(() => {
-		addDraft.taxPercent = defaultTaxPercent;
-	});
-	const addPreview = $derived(pricePreview(addDraft.purchasePrice, addDraft.shippingCost, addDraft.serviceFee, addDraft.marginPercent, addDraft.taxPercent));
-
-	function pricePreview(purchasePrice: number, shippingCost: number, serviceFee: number, marginPercent: number, taxPercent: number) {
-		const hpp = Math.max(0, Number(purchasePrice) || 0) + Math.max(0, Number(shippingCost) || 0);
-		const marginAmount = Math.max(0, Number(purchasePrice) || 0) * Math.max(0, Number(marginPercent) || 0) / 100;
-		const priceBeforeTax = hpp + Math.max(0, Number(serviceFee) || 0) + marginAmount;
-		const taxAmount = priceBeforeTax * Math.max(0, Number(taxPercent) || 0) / 100;
-		const priceAfterTax = priceBeforeTax + taxAmount;
-		return { hpp, marginAmount, priceBeforeTax, taxAmount, priceAfterTax, fixedSalePrice: Math.round(priceAfterTax / roundingIncrement) * roundingIncrement };
-	}
+	const defaultUnit = $derived(data.shopProfile?.inventoryDefaultUnit ?? 'pcs');
 
 	function pageHref(page: number) {
 		const query = new URLSearchParams(queryBase);
@@ -368,12 +359,24 @@
 											<span class="material-symbols-outlined text-[15px]">tune</span>
 										</button>
 									{/if}
+									{#if canManageItems}
+										<button
+											type="button"
+											class="inline-flex h-8 items-center rounded-button border border-stone bg-white px-2.5 text-xs font-medium text-secondary hover:text-ink hover:bg-ash transition-colors shadow-2xs cursor-pointer"
+											onclick={() => editingItem = item}
+											title={t('inventory.editItem')}
+											aria-label={t('inventory.editItem')}
+										>
+											<span class="material-symbols-outlined text-[15px]" aria-hidden="true">edit</span>
+										</button>
+									{/if}
 									<a
 										class="inline-flex h-8 items-center rounded-button border border-stone bg-white px-2.5 text-xs font-medium text-secondary hover:text-ink hover:bg-ash transition-colors shadow-2xs"
 										href={`/app/inventory/${item.id}/label?from=list`}
 										title={t('inventory.printLabel')}
+										aria-label={t('inventory.printLabel')}
 									>
-										<span class="material-symbols-outlined text-[15px]">print</span>
+										<span class="material-symbols-outlined text-[15px]" aria-hidden="true">print</span>
 									</a>
 									<a
 										class="inline-flex h-8 items-center rounded-button border border-stone bg-white px-2.5 text-xs font-medium text-primary hover:bg-ash transition-colors shadow-2xs"
@@ -381,6 +384,35 @@
 									>
 										{t('tickets.list.open')}
 									</a>
+									{#if canDeleteInventory}
+										<form
+											method="POST"
+											action="?/deleteItem"
+											use:enhance={() => {
+												deletingItemId = item.id;
+												return async ({ update }) => {
+													await update();
+													deletingItemId = null;
+												};
+											}}
+										>
+											<input type="hidden" name="id" value={item.id} />
+											<DeleteConfirmButton
+												label={t('common.delete')}
+												confirmLabel={t('common.delete')}
+												confirmTitle={t('inventory.deleteItemTitle')}
+												confirmMessage={t('inventory.deleteItemConfirm')}
+												cancelLabel={t('common.cancel')}
+												icon="delete"
+												iconOnly
+												disabled={item.reservedQuantity > 0}
+												submitting={deletingItemId === item.id}
+												title={item.reservedQuantity > 0 ? t('inventory.deleteBlockedReserved') : t('inventory.deleteOrDeactivate')}
+												ariaLabel={item.reservedQuantity > 0 ? t('inventory.deleteBlockedReserved') : t('inventory.deleteOrDeactivate')}
+												class="inline-flex h-8 items-center justify-center rounded-button border border-error/30 bg-error/10 px-2.5 text-xs font-medium text-error hover:bg-error/15 transition-colors shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-error/10"
+											/>
+										</form>
+									{/if}
 								</div>
 							</td>
 						</tr>
@@ -434,6 +466,9 @@
 								<span class="font-mono font-bold text-xs text-ink bg-ash/80 px-1.5 py-0.5 rounded border border-stone">
 									{item.sku}
 								</span>
+								{#if !item.isActive}
+									<StatusBadge variant="neutral" label={t('inventory.inactive')} />
+								{/if}
 								{#if isLowStock}
 									<span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-800 border border-amber-300">
 										{t('inventory.lowStock')}
@@ -472,12 +507,52 @@
 									<span class="material-symbols-outlined text-[14px]">tune</span>
 								</button>
 							{/if}
+							{#if canManageItems}
+								<button
+									type="button"
+									class="inline-flex h-7 items-center rounded-button border border-stone bg-white px-2 text-xs text-secondary hover:text-ink hover:bg-ash cursor-pointer shadow-2xs"
+									onclick={() => editingItem = item}
+									title={t('inventory.editItem')}
+									aria-label={t('inventory.editItem')}
+								>
+									<span class="material-symbols-outlined text-[14px]" aria-hidden="true">edit</span>
+								</button>
+							{/if}
 							<a
 								class="inline-flex h-7 items-center rounded-button border border-stone bg-white px-2 text-xs font-medium text-primary hover:bg-ash shadow-2xs"
 								href={`/app/inventory/${item.id}`}
 							>
 								{t('tickets.list.open')}
 							</a>
+							{#if canDeleteInventory}
+								<form
+									method="POST"
+									action="?/deleteItem"
+									use:enhance={() => {
+										deletingItemId = item.id;
+										return async ({ update }) => {
+											await update();
+											deletingItemId = null;
+										};
+									}}
+								>
+									<input type="hidden" name="id" value={item.id} />
+									<DeleteConfirmButton
+										label={t('common.delete')}
+										confirmLabel={t('common.delete')}
+										confirmTitle={t('inventory.deleteItemTitle')}
+										confirmMessage={t('inventory.deleteItemConfirm')}
+										cancelLabel={t('common.cancel')}
+										icon="delete"
+										iconOnly
+										disabled={item.reservedQuantity > 0}
+										submitting={deletingItemId === item.id}
+										title={item.reservedQuantity > 0 ? t('inventory.deleteBlockedReserved') : t('inventory.deleteOrDeactivate')}
+										ariaLabel={item.reservedQuantity > 0 ? t('inventory.deleteBlockedReserved') : t('inventory.deleteOrDeactivate')}
+										class="inline-flex h-7 items-center justify-center rounded-button border border-error/30 bg-error/10 px-2 text-xs text-error hover:bg-error/15 cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
+									/>
+								</form>
+							{/if}
 						</div>
 					</div>
 				</div>
@@ -561,174 +636,21 @@
 
 <!-- ================= MODALS & DIALOGS ================= -->
 
-<!-- 1. Add New Item Modal -->
-{#if showAddModal}
-	<div transition:fade={{ duration: 150 }} class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-		<div class="bg-white border border-stone rounded-2xl shadow-2xl max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden my-auto">
-			<div class="px-6 py-4 border-b border-stone flex items-center justify-between bg-surface-container-low shrink-0">
-				<div>
-					<h3 class="font-subheading text-[17px] font-bold text-ink">{t('inventory.addItem')}</h3>
-					<p class="text-xs text-secondary mt-0.5">{t('inventory.subtitle')}</p>
-				</div>
-				<button type="button" class="w-8 h-8 rounded-lg hover:bg-ash text-secondary hover:text-ink flex items-center justify-center cursor-pointer transition-colors" onclick={() => showAddModal = false}>
-					<span class="material-symbols-outlined text-[20px]">close</span>
-				</button>
-			</div>
-
-			<form method="POST" action="?/saveItem" class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-				<input type="hidden" name="isActive" value="on" />
-				<input type="hidden" name="costPrice" value={addDraft.purchasePrice} />
-				<input type="hidden" name="salePrice" value={addPreview.fixedSalePrice} />
-
-				<!-- Basic Identity -->
-				<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-					<label class="space-y-1 block">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.sku')} *</span>
-						<input name="sku" required class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink focus:border-ink focus:ring-1 focus:ring-ink/10 focus:outline-none" placeholder="e.g. SSD-NVME-1TB" />
-					</label>
-					<label class="space-y-1 sm:col-span-2 block">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.name')} *</span>
-						<input name="name" required class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink focus:border-ink focus:ring-1 focus:ring-ink/10 focus:outline-none" placeholder="e.g. Samsung 980 Pro NVMe 1TB" />
-					</label>
-					<div class="space-y-1">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.category')}</span>
-						<Dropdown
-							name="categoryId"
-							value=""
-							options={[
-								{ value: '', label: t('inventory.noCategory') },
-								...data.categories.filter((category) => category.isActive).map((category) => ({ value: String(category.id), label: category.name }))
-							]}
-						/>
-					</div>
-					<div class="space-y-1">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.itemType')}</span>
-						<Dropdown
-							name="itemType"
-							value={itemTypes[0]}
-							options={itemTypes.map((type) => ({ value: type, label: t(`inventory.itemType.${type}`) }))}
-						/>
-					</div>
-					<div class="space-y-1">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.condition')}</span>
-						<Dropdown
-							name="condition"
-							value={conditions[0]}
-							options={conditions.map((condition) => ({ value: condition, label: t(`inventory.condition.${condition}`) }))}
-						/>
-					</div>
-				</div>
-
-				<!-- Pricing & Cost Calculation Card -->
-				<div class="bg-ash/50 border border-stone rounded-xl p-4 space-y-4">
-					<div class="flex items-center justify-between">
-						<h4 class="font-label-caps text-ink text-[12px] font-bold uppercase tracking-wider">{t('inventory.detail.pricing')}</h4>
-						<span class="text-xs text-secondary font-mono">{currencyCode}</span>
-					</div>
-					<div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-						<div class="space-y-1">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.purchasePrice')}</span>
-							<CurrencyInput
-								name="purchasePrice"
-								prefix={currencySymbol}
-								locale={data.locale}
-								currency={currencyCode}
-								bind:value={addDraft.purchasePrice}
-							/>
-						</div>
-						<div class="space-y-1">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.shippingCost')}</span>
-							<CurrencyInput
-								name="shippingCost"
-								prefix={currencySymbol}
-								locale={data.locale}
-								currency={currencyCode}
-								bind:value={addDraft.shippingCost}
-							/>
-						</div>
-						<div class="space-y-1">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.serviceFee')}</span>
-							<CurrencyInput
-								name="serviceFee"
-								prefix={currencySymbol}
-								locale={data.locale}
-								currency={currencyCode}
-								bind:value={addDraft.serviceFee}
-							/>
-						</div>
-						<label class="space-y-1 block">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.marginPercent')}</span>
-							<input name="marginPercent" type="number" min="0" step="0.01" bind:value={addDraft.marginPercent} class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink focus:border-ink focus:outline-none bg-white" />
-						</label>
-						<label class="space-y-1 block">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.taxPercent')}</span>
-							<input name="taxPercent" type="number" min="0" step="0.01" bind:value={addDraft.taxPercent} class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink focus:border-ink focus:outline-none bg-white" />
-						</label>
-						<div class="space-y-1">
-							<span class="font-label-caps text-ink text-[10px] font-bold uppercase">{t('inventory.salePrice')}</span>
-							<div class="h-10 px-3 border border-stone rounded-input bg-white font-mono font-bold text-ink text-body-sm flex items-center">
-								{formatCurrency(addPreview.fixedSalePrice, data.locale, currencyCode)}
-							</div>
-						</div>
-					</div>
-
-					<!-- Calculation summary strip -->
-					<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-stone/60 text-xs font-mono text-secondary">
-						<div>HPP: <strong class="text-ink">{formatCurrency(addPreview.hpp, data.locale, currencyCode)}</strong></div>
-						<div>Margin: <strong class="text-ink">{formatCurrency(addPreview.marginAmount, data.locale, currencyCode)}</strong></div>
-						<div>Tax: <strong class="text-ink">{formatCurrency(addPreview.taxAmount, data.locale, currencyCode)}</strong></div>
-						<div>Final: <strong class="text-emerald-700 font-bold">{formatCurrency(addPreview.fixedSalePrice, data.locale, currencyCode)}</strong></div>
-					</div>
-				</div>
-
-				<!-- Stock & Physical Attributes -->
-				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-					<label class="space-y-1 block">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.unit')}</span>
-						<input name="unit" value="pcs" class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none" />
-					</label>
-					<label class="space-y-1 block">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.reorder')}</span>
-						<input name="reorderLevel" type="number" min="0" value="0" class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink focus:border-ink focus:outline-none" />
-					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.location')}</span>
-						<input name="locationNote" placeholder="e.g. Rack A, Shelf 2" class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none" />
-					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.barcodeValue')}</span>
-						<input name="barcodeValue" placeholder="Scan or enter barcode" class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink focus:border-ink focus:outline-none" />
-					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.supplier')}</span>
-						<input name="supplierName" class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none" />
-					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.quality')}</span>
-						<input name="quality" placeholder="e.g. Original / OEM" class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none" />
-					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.warrantyDays')}</span>
-						<input name="warrantyDays" type="number" min="0" placeholder="e.g. 30" class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink focus:border-ink focus:outline-none" />
-					</label>
-					<label class="space-y-1 block col-span-2 sm:col-span-4">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.description')}</span>
-						<input name="description" placeholder={t('inventory.secondhandHint')} class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink focus:border-ink focus:outline-none" />
-					</label>
-				</div>
-
-				<div class="pt-4 border-t border-stone flex items-center justify-end gap-2 shrink-0">
-					<button type="button" class="px-4 py-2 rounded-button border border-stone bg-white text-secondary hover:text-ink hover:bg-ash font-medium text-body-sm transition-all cursor-pointer" onclick={() => showAddModal = false}>
-						{t('common.cancel')}
-					</button>
-					<button type="submit" class="px-5 py-2 rounded-button bg-ink text-white font-medium text-body-sm hover:bg-ink/90 active:scale-95 transition-all shadow-xs cursor-pointer">
-						{t('inventory.addItem')}
-					</button>
-				</div>
-			</form>
-		</div>
-	</div>
-{/if}
+<!-- 1. Add / Edit Item Modal -->
+<InventoryItemModal
+	open={itemModalOpen}
+	item={editingItem}
+	categories={data.categories}
+	locale={data.locale}
+	{currencyCode}
+	{defaultTaxPercent}
+	{roundingIncrement}
+	{defaultUnit}
+	onclose={() => {
+		showAddModal = false;
+		editingItem = null;
+	}}
+/>
 
 <!-- 2. Quick Stock In Modal -->
 {#if stockInItem}

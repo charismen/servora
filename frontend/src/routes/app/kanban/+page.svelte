@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { deserialize } from '$app/forms';
+	import { goto } from '$app/navigation';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { tilt } from '$lib/components/tilt';
 	import { createTranslator, formatDate, resolveFeatureConfig, resolveTerminology } from '$lib/i18n';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { submitActionSafely } from '$lib/utils/form-action';
 	import type { ActionData, PageData } from './$types';
 	import type { KanbanColumn, KanbanTicket } from '$lib/types/service-tickets';
 	import GlowingBadge from '$lib/components/ui/glowing-badge/GlowingBadge.svelte';
@@ -453,14 +454,19 @@
 		formData.set('statusId', String(toStatusId));
 
 		try {
-			const response = await fetch('?/moveTicket', {
-				method: 'POST',
-				body: formData
-			});
+			const actionRes = await submitActionSafely('?/moveTicket', formData, t);
+			if (!actionRes.ok) {
+				optimisticColumns = null;
+				toast.error(actionRes.message || t('kanban.ticketMoveFailed'));
+				triggerFailedShake(ticket.id);
+				return;
+			}
 
-			const text = await response.text();
-			const result = deserialize(text);
-
+			const result = actionRes.result;
+			if (result.type === 'redirect') {
+				await goto(result.location);
+				return;
+			}
 			if (result.type === 'success') {
 				toast.success(t('kanban.ticketMoved', { status: targetName }));
 			} else {
@@ -472,7 +478,7 @@
 				toast.error(message);
 				triggerFailedShake(ticket.id);
 			}
-		} catch (error) {
+		} catch {
 			optimisticColumns = null;
 			toast.error(t('kanban.ticketMoveFailed'));
 			triggerFailedShake(ticket.id);

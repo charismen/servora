@@ -6,6 +6,11 @@
 		cancelLabel,
 		confirmLabel = label,
 		confirmIcon = 'delete',
+		icon = undefined,
+		iconOnly = false,
+		title = undefined,
+		ariaLabel = undefined,
+		disabled = false,
 		variant = 'danger',
 		submitting = false,
 		formaction,
@@ -17,6 +22,11 @@
 		cancelLabel: string;
 		confirmLabel?: string;
 		confirmIcon?: string;
+		icon?: string;
+		iconOnly?: boolean;
+		title?: string;
+		ariaLabel?: string;
+		disabled?: boolean;
 		variant?: 'danger' | 'warning';
 		submitting?: boolean;
 		formaction?: string;
@@ -24,6 +34,14 @@
 	} = $props();
 
 	let dialog: HTMLDialogElement | undefined;
+	let wasSubmitting = false;
+
+	$effect(() => {
+		if (wasSubmitting && !submitting && dialog?.open) {
+			dialog.close();
+		}
+		wasSubmitting = submitting;
+	});
 
 	export function close() {
 		if (dialog?.open) {
@@ -63,7 +81,21 @@
 	);
 </script>
 
-<button class={className} type="button" disabled={submitting} onclick={() => dialog?.showModal()}>{label}</button>
+<button
+	class={className}
+	type="button"
+	disabled={disabled || submitting}
+	{title}
+	aria-label={ariaLabel ?? (iconOnly ? label : undefined)}
+	onclick={() => dialog?.showModal()}
+>
+	{#if icon}
+		<span class="material-symbols-outlined text-[15px]" aria-hidden="true">{icon}</span>
+	{/if}
+	{#if !iconOnly}
+		<span>{label}</span>
+	{/if}
+</button>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->

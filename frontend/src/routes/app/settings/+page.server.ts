@@ -1,4 +1,5 @@
 import { fail } from '@sveltejs/kit';
+import { resolveSupportedImageMime } from '$lib/media';
 import { serverApiRequest, ServerApiError } from '$lib/server/api';
 import { createTranslator } from '$lib/i18n';
 import { sanitizePhoneNumber } from '$lib/utils/phone';
@@ -32,8 +33,12 @@ export const actions: Actions = {
 			});
 			if (logo && typeof logo !== 'string' && logo.size > 0) {
 				if (logo.size > 5 * 1024 * 1024) return fail(400, { settings: payload, message: t('settings.logoTooLarge') });
-				if (!isLogoFile(logo)) return fail(400, { settings: payload, message: t('settings.logoInvalidType') });
-				settings = await uploadLogo(fetch, token, logo);
+				const logoMime = resolveSupportedImageMime(logo);
+				if (!logoMime) return fail(400, { settings: payload, message: t('settings.logoInvalidType') });
+				const normalizedLogo = logo.type.toLowerCase() === logoMime
+					? logo
+					: new File([logo], logo.name, { type: logoMime, lastModified: logo.lastModified });
+				settings = await uploadLogo(fetch, token, normalizedLogo);
 			}
 
 			return { settings, message: t('settings.updated') };
@@ -101,10 +106,6 @@ function readSettingsForm(form: FormData): ShopProfileSettings {
 function numberValue(form: FormData, key: string, fallback: number) {
 	const value = Number(form.get(key) ?? fallback);
 	return Number.isFinite(value) ? value : fallback;
-}
-
-function isLogoFile(file: File) {
-	return ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name);
 }
 
 async function uploadLogo(fetcher: typeof fetch, token: string | undefined, logo: File) {

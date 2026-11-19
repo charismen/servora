@@ -43,8 +43,16 @@ export async function apiRequest<TResponse>(
 		throw new ApiError(`API unavailable at ${apiBaseUrl}`, 503);
 	}
 
-	const contentType = response.headers.get('content-type');
-	const payload = contentType?.includes('application/json') ? await response.json() : await response.text();
+	const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+	const rawText = await response.text();
+	let payload: unknown = rawText;
+	if (contentType.includes('json') && rawText.trim().length > 0) {
+		try {
+			payload = JSON.parse(rawText);
+		} catch {
+			payload = rawText;
+		}
+	}
 
 	if (!response.ok) {
 		throw new ApiError(response.statusText || 'API request failed', response.status, payload);

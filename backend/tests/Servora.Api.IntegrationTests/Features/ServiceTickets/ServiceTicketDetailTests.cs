@@ -337,6 +337,70 @@ public class ServiceTicketDetailTests : IClassFixture<IntegrationTestWebAppFacto
     }
 
     [Fact]
+    public async Task UploadAttachment_WithLongFileName_TruncatesSafelyAndSucceeds()
+    {
+        var ticketId = await CreateTicketAsync();
+        var longName = $"{new string('a', 300)}.jpg";
+        var response = await UploadAsync(ticketId, "image/jpg", longName);
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var attachment = await context.ServiceTicketAttachments.AsNoTracking().FirstAsync(item => item.ServiceTicketId == ticketId);
+        attachment.FileName.Length.Should().BeLessThanOrEqualTo(255);
+        attachment.FileName.Should().EndWith(".jpg");
+    }
+
+    [Fact]
+    public async Task CreateAndUpdateTicket_WithOversizedFields_ReturnsBadRequest()
+    {
+        var customerId = await CreateCustomerAsync();
+        var createResponse = await _client.PostAsJsonAsync("/api/v1/service-tickets", new
+        {
+            customerId,
+            newDevice = new
+            {
+                deviceType = "Vehicle",
+                brand = "Toyota",
+                model = "Avanza",
+                serialNumber = (string?)null,
+                identifierLabel = (string?)null,
+                notes = (string?)null
+            },
+            complaint = new string('x', 2001),
+            priority = "Normal"
+        });
+        createResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var oversizedMeterUnit = await _client.PostAsJsonAsync("/api/v1/service-tickets", new
+        {
+            customerId,
+            newDevice = new
+            {
+                deviceType = "Vehicle",
+                brand = "Toyota",
+                model = "Avanza",
+                serialNumber = (string?)null,
+                identifierLabel = (string?)null,
+                meterUnit = new string('u', 31),
+                notes = (string?)null
+            },
+            complaint = "Valid complaint",
+            priority = "Normal"
+        });
+        oversizedMeterUnit.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var ticketId = await CreateTicketAsync();
+        var updateResponse = await _client.PutAsJsonAsync($"/api/v1/service-tickets/{ticketId}", new
+        {
+            complaint = "Valid complaint",
+            diagnosis = new string('d', 4001),
+            priority = "Normal"
+        });
+        updateResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task AddAndDeleteAccessory_IsScopedToTicket()
     {
         var ticketId = await CreateTicketAsync();

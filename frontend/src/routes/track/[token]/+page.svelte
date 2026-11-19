@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { createTranslator, formatDate, resolveTerminology } from '$lib/i18n';
 	import { apiAssetUrl } from '$lib/media';
+	import { formatEnhanceUnexpectedError } from '$lib/utils/http';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -10,6 +11,7 @@
 	const terms = $derived(resolveTerminology(tracking?.terminology, data.locale));
 	const shopLogoUrl = $derived(apiAssetUrl(tracking?.shopLogoUrl));
 	let verifying = $state(false);
+	let verifyError = $state('');
 	let phoneLastFour = $state('');
 	const unlockedAttachments = $derived(form?.attachments ?? tracking?.attachments ?? []);
 	const isUnlocked = $derived(Boolean(form?.verified) || unlockedAttachments.length > 0);
@@ -254,12 +256,12 @@
 								</div>
 							</div>
 
-							{#if form?.errorKey}
+							{#if verifyError || form?.errorKey}
 								<div class="rounded-lg border border-error/30 bg-error/10 px-3.5 py-2 text-body-sm text-error flex items-center gap-2">
 									<svg class="w-4 h-4 shrink-0 text-error" viewBox="0 0 20 20" fill="currentColor">
 										<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
 									</svg>
-									<span>{t(form.errorKey)}</span>
+									<span>{verifyError || (form?.errorKey ? t(form.errorKey) : '')}</span>
 								</div>
 							{/if}
 
@@ -269,9 +271,17 @@
 								class="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 pt-1"
 								use:enhance={() => {
 									verifying = true;
-									return async ({ update }) => {
-										await update({ reset: false });
-										verifying = false;
+									verifyError = '';
+									return async ({ result, update }) => {
+										try {
+											if (result.type === 'error') {
+												verifyError = formatEnhanceUnexpectedError(result.error, t);
+												return;
+											}
+											await update({ reset: false });
+										} finally {
+											verifying = false;
+										}
 									};
 								}}
 							>

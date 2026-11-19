@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { env } from '$env/dynamic/public';
+import { resolveSupportedImageMime } from '$lib/media';
 import { serverApiRequest, ServerApiError } from '$lib/server/api';
 import type { Actions, PageServerLoad } from './$types';
 import type { InventoryItem, TicketInventoryUsage } from '$lib/types/inventory';
@@ -52,6 +53,28 @@ export const actions: Actions = {
 		const scheduledEnd = nullable(form.get('scheduledVisitEnd'));
 		const slaDue = nullable(form.get('slaDueAt'));
 		const siteLoc = nullable(form.get('siteLocationId'));
+		const warrantyDate = nullable(form.get('warrantyUntil'));
+		const createdDate = nullable(form.get('createdAt'));
+
+		if (warrantyDate && !isValidYmd(warrantyDate)) {
+			return fail(400, { ok: false, success: false, action: 'update', messageKey: 'tickets.create.invalidDate', variant: 'error' });
+		}
+		if (createdDate && !isValidYmd(createdDate)) {
+			return fail(400, { ok: false, success: false, action: 'update', messageKey: 'tickets.create.invalidDate', variant: 'error' });
+		}
+
+		const scheduledVisitStart = parseOptionalIsoDate(scheduledStart);
+		if (scheduledStart && !scheduledVisitStart) {
+			return fail(400, { ok: false, success: false, action: 'update', messageKey: 'tickets.create.invalidDate', variant: 'error' });
+		}
+		const scheduledVisitEnd = parseOptionalIsoDate(scheduledEnd);
+		if (scheduledEnd && !scheduledVisitEnd) {
+			return fail(400, { ok: false, success: false, action: 'update', messageKey: 'tickets.create.invalidDate', variant: 'error' });
+		}
+		const slaDueAt = parseOptionalIsoDate(slaDue);
+		if (slaDue && !slaDueAt) {
+			return fail(400, { ok: false, success: false, action: 'update', messageKey: 'tickets.create.invalidDate', variant: 'error' });
+		}
 
 		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}`, 'PUT', {
 			complaint: String(form.get('complaint') ?? ''),
@@ -64,19 +87,19 @@ export const actions: Actions = {
 			preRepairChecklist: nullable(form.get('preRepairChecklist')),
 			diagnosis: nullable(form.get('diagnosis')),
 			repairNotes: nullable(form.get('repairNotes')),
-			warrantyUntil: nullable(form.get('warrantyUntil')) ? `${nullable(form.get('warrantyUntil'))}T23:59:59Z` : null,
+			warrantyUntil: warrantyDate ? `${warrantyDate}T23:59:59Z` : null,
 			warrantyTerms: nullable(form.get('warrantyTerms')),
 			priority: nullable(form.get('priority')),
-			createdAt: nullable(form.get('createdAt')) ? `${nullable(form.get('createdAt'))}T00:00:00Z` : null,
+			createdAt: createdDate ? `${createdDate}T00:00:00Z` : null,
 			updatedAt: nullable(form.get('updatedAt')),
 			serviceLocationType: nullable(form.get('serviceLocationType')),
 			siteLocationId: siteLoc ? Number(siteLoc) : null,
 			clearSiteLocationId: form.has('serviceLocationType') && !siteLoc,
 			siteAddressSnapshot: nullable(form.get('siteAddressSnapshot')),
-			scheduledVisitStart: scheduledStart ? new Date(scheduledStart).toISOString() : null,
-			scheduledVisitEnd: scheduledEnd ? new Date(scheduledEnd).toISOString() : null,
+			scheduledVisitStart,
+			scheduledVisitEnd,
 			clearFieldServiceSchedule: form.has('serviceLocationType') && !scheduledStart && !scheduledEnd,
-			slaDueAt: slaDue ? new Date(slaDue).toISOString() : null,
+			slaDueAt,
 			clearSlaDueAt: form.has('serviceLocationType') && !slaDue,
 			departmentCode: form.has('departmentCode') ? String(form.get('departmentCode') ?? '') : null,
 			costCenter: form.has('costCenter') ? String(form.get('costCenter') ?? '') : null
@@ -198,21 +221,26 @@ export const actions: Actions = {
 		const file = form.get('file');
 		if (!(file instanceof File) || file.size === 0) return fail(400, { success: false, messageKey: 'tickets.attachments.fileRequired', action: 'uploadAttachment', variant: 'error' });
 		if (file.size > 5 * 1024 * 1024) return fail(400, { success: false, messageKey: 'tickets.attachments.fileTooLarge', action: 'uploadAttachment', variant: 'error' });
-		if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return fail(400, { success: false, messageKey: 'tickets.attachments.fileTypeInvalid', action: 'uploadAttachment', variant: 'error' });
-		if (file instanceof File) body.set('file', file);
+		const mime = resolveSupportedImageMime(file);
+		if (!mime) return fail(400, { success: false, messageKey: 'tickets.attachments.fileTypeInvalid', action: 'uploadAttachment', variant: 'error' });
+		const uploadFile = file.type.toLowerCase() === mime
+			? file
+			: new File([file], file.name, { type: mime, lastModified: file.lastModified });
+		body.set('file', uploadFile);
 		body.set('attachmentType', String(form.get('attachmentType') ?? 'Other'));
 		body.set('isPublicVisible', form.get('isPublicVisible') === 'on' ? 'true' : 'false');
 
 		try {
-			const apiBaseUrl = env.PUBLIC_API_BASE_URL ?? 'http://localhost:5051/api/v1';
-			const response = await fetch(`${apiBaseUrl}/service-tickets/${params.id}/attachments`, {
+			await serverApiRequest(fetch, `/service-tickets/${params.id}/attachments`, {
 				method: 'POST',
-				headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+				token,
 				body
 			});
-			if (!response.ok) return fail(response.status, { success: false, message: await response.text(), action: 'uploadAttachment', variant: 'error' });
 			return { success: true, ok: true, action: 'uploadAttachment', messageKey: 'tickets.attachments.uploaded' };
-		} catch {
+		} catch (error) {
+			if (error instanceof ServerApiError) {
+				return fail(error.status, { success: false, message: error.message, action: 'uploadAttachment', variant: 'error' });
+			}
 			return fail(503, { success: false, messageKey: 'tickets.detail.apiUnavailable', action: 'uploadAttachment', variant: 'error' });
 		}
 	},
@@ -515,6 +543,19 @@ async function inventoryAction(request: Request, fetcher: typeof fetch, token: s
 	}, { ok: true, action: 'inventory', messageKey });
 }
 
+function isValidYmd(value: string) {
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+	const [y, m, d] = value.split('-').map(Number);
+	const parsed = new Date(Date.UTC(y, m - 1, d));
+	return parsed.getUTCFullYear() === y && parsed.getUTCMonth() === m - 1 && parsed.getUTCDate() === d;
+}
+
+function parseOptionalIsoDate(value: string | null) {
+	if (!value) return null;
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 async function submitJson(fetcher: typeof fetch, token: string | undefined, path: string, method: 'POST' | 'PUT' | 'DELETE', body: unknown, success: Record<string, unknown> = {}) {
 	try {
 		await serverApiRequest(fetcher, path, { method, token, body });
@@ -530,7 +571,13 @@ async function submitJson(fetcher: typeof fetch, token: string | undefined, path
 				variant: error.status === 409 ? 'warning' : 'error'
 			});
 		}
-		throw error;
+		return fail(500, {
+			...success,
+			ok: false,
+			success: false,
+			message: error instanceof Error ? error.message : 'Request failed.',
+			variant: 'error'
+		});
 	}
 }
 

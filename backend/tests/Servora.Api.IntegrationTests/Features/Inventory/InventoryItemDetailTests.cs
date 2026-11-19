@@ -168,6 +168,152 @@ public class InventoryItemDetailTests : IClassFixture<IntegrationTestWebAppFacto
         stale.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
 
+    [Fact]
+    public async Task UpdateItem_ShouldUpdateCategoryFixedPriceAndActiveStatus()
+    {
+        int itemId;
+        int newCategoryId;
+        var sku = $"CAT-{Guid.NewGuid():N}"[..16];
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var shopId = await context.Shops.Select(shop => shop.Id).FirstAsync();
+            var oldCategory = new InventoryCategory { ShopId = shopId, Name = $"Old-{Guid.NewGuid():N}"[..16], IsActive = true };
+            var newCategory = new InventoryCategory { ShopId = shopId, Name = $"New-{Guid.NewGuid():N}"[..16], IsActive = true };
+            context.InventoryCategories.AddRange(oldCategory, newCategory);
+            await context.SaveChangesAsync();
+
+            var item = new InventoryItem
+            {
+                ShopId = shopId,
+                CategoryId = oldCategory.Id,
+                Sku = sku,
+                Name = "HVAC Fan Capacitor",
+                Unit = "pcs",
+                CostPrice = 150000,
+                SalePrice = 200000,
+                PurchasePrice = 150000,
+                FixedSalePrice = 200000,
+                ReorderLevel = 1,
+                IsActive = false
+            };
+            context.InventoryItems.Add(item);
+            await context.SaveChangesAsync();
+            itemId = item.Id;
+            newCategoryId = newCategory.Id;
+        }
+
+        var response = await _client.PutAsJsonAsync($"/api/v1/inventory/items/{itemId}", new InventoryEndpoints.UpsertItemRequest(
+            CategoryId: newCategoryId,
+            Sku: sku,
+            Name: "HVAC Fan Capacitor Updated",
+            Unit: "pcs",
+            CostPrice: 150000,
+            SalePrice: 225000,
+            ReorderLevel: 2,
+            IsActive: true,
+            ItemType: "Equipment",
+            Condition: "New",
+            PurchasePrice: 150000,
+            ShippingCost: 10000,
+            ServiceFee: 25000,
+            MarginPercent: 10,
+            TaxPercent: 11,
+            FixedSalePrice: 225000));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        await using var verifyScope = _factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var updated = await verifyContext.InventoryItems.SingleAsync(existing => existing.Id == itemId);
+        updated.CategoryId.Should().Be(newCategoryId);
+        updated.Name.Should().Be("HVAC Fan Capacitor Updated");
+        updated.ItemType.Should().Be(InventoryItemType.Equipment);
+        updated.FixedSalePrice.Should().Be(225000);
+        updated.IsActive.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DeleteItem_WhenUnreferenced_ShouldHardDelete()
+    {
+        int itemId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var shopId = await context.Shops.Select(shop => shop.Id).FirstAsync();
+            var item = NewItem(shopId, $"DEL-{Guid.NewGuid():N}"[..16], "Unused Item", 0, 0);
+            context.InventoryItems.Add(item);
+            await context.SaveChangesAsync();
+            itemId = item.Id;
+        }
+
+        var response = await _client.DeleteAsync($"/api/v1/inventory/items/{itemId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("action").GetString().Should().Be("deleted");
+
+        await using var verifyScope = _factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var exists = await verifyContext.InventoryItems.AnyAsync(existing => existing.Id == itemId);
+        exists.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DeleteItem_WhenMovementsExist_ShouldSoftDeactivate()
+    {
+        int itemId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var shopId = await context.Shops.Select(shop => shop.Id).FirstAsync();
+            var item = NewItem(shopId, $"DEA-{Guid.NewGuid():N}"[..16], "Ledger Item", 5, 0);
+            context.InventoryItems.Add(item);
+            await context.SaveChangesAsync();
+            context.InventoryMovements.Add(new InventoryMovement
+            {
+                ShopId = shopId,
+                InventoryItemId = item.Id,
+                Type = InventoryMovementType.StockIn,
+                Quantity = 5,
+                Reason = "Initial stock"
+            });
+            await context.SaveChangesAsync();
+            itemId = item.Id;
+        }
+
+        var response = await _client.DeleteAsync($"/api/v1/inventory/items/{itemId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("action").GetString().Should().Be("deactivated");
+
+        await using var verifyScope = _factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var saved = await verifyContext.InventoryItems.SingleAsync(existing => existing.Id == itemId);
+        saved.IsActive.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DeleteItem_WhenReserved_ShouldReturnBadRequest()
+    {
+        int itemId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var shopId = await context.Shops.Select(shop => shop.Id).FirstAsync();
+            var item = NewItem(shopId, $"RES-{Guid.NewGuid():N}"[..16], "Reserved Item", 3, 1);
+            context.InventoryItems.Add(item);
+            await context.SaveChangesAsync();
+            itemId = item.Id;
+        }
+
+        var response = await _client.DeleteAsync($"/api/v1/inventory/items/{itemId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     private static InventoryItem NewItem(int shopId, string sku, string name, decimal onHandQuantity, decimal reservedQuantity) => new()
     {
         ShopId = shopId,

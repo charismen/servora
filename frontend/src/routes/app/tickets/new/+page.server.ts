@@ -1,4 +1,5 @@
 import { fail, isHttpError, isRedirect, redirect } from '@sveltejs/kit';
+import { resolveSupportedImageMime } from '$lib/media';
 import { serverApiRequest, ServerApiError } from '$lib/server/api';
 import type { Actions, PageServerLoad } from './$types';
 import type { CustomersResponse } from '$lib/types/customers';
@@ -6,6 +7,8 @@ import type { Device } from '$lib/types/devices';
 import type { CustomerLocation } from '$lib/types/maintenance';
 import type { ShopProfileSettings } from '$lib/types/settings';
 import type { StaffUser } from '$lib/types/shop-users';
+
+const MAX_INTAKE_PHOTO_BYTES = 5 * 1024 * 1024;
 
 export const load: PageServerLoad = async ({ parent, cookies, fetch }) => {
 	const parentData = await parent();
@@ -52,6 +55,7 @@ export const actions: Actions = {
 		const customerId = Number(form.get('customerId'));
 		const deviceId = Number(form.get('deviceId') || 0);
 		const deviceMode = String(form.get('deviceMode') ?? 'existing');
+		const deferAttachments = String(form.get('deferAttachments') ?? '') === 'true';
 
 		const assetCustomFields = extractPrefixedFields(form, 'assetField_');
 		const ticketCustomFields = extractPrefixedFields(form, 'ticketField_');
@@ -70,38 +74,86 @@ export const actions: Actions = {
 		const newDevice =
 			deviceMode === 'new'
 				? {
-						deviceType: String(form.get('newDeviceType') ?? ''),
-						brand: String(form.get('newDeviceBrand') ?? ''),
-						model: String(form.get('newDeviceModel') ?? ''),
+						deviceType: String(form.get('newDeviceType') ?? '').trim(),
+						brand: String(form.get('newDeviceBrand') ?? '').trim(),
+						model: String(form.get('newDeviceModel') ?? '').trim(),
 						serialNumber: nullable(form.get('newDeviceSerialNumber')),
 						identifierLabel: nullable(form.get('newDeviceIdentifierLabel')),
-						meterReading: numberOrNull(form.get('newDeviceMeterReading')),
+						meterReading: nonNegativeNumberOrNull(form.get('newDeviceMeterReading')),
 						meterUnit: nullable(form.get('newDeviceMeterUnit')),
-						siteLocationId: numberOrNull(form.get('siteLocationId')),
+						siteLocationId: positiveIdOrNull(form.get('siteLocationId')),
 						notes: nullable(form.get('newDeviceNotes')),
 						customFields: assetCustomFields
 					}
 				: null;
 
 		try {
-			if (!customerId) return fail(400, { success: false, messageKey: 'tickets.create.customerRequired' });
-			if (deviceMode !== 'new' && !deviceId) return fail(400, { success: false, messageKey: 'tickets.create.deviceRequired' });
-			const settings = await serverApiRequest<ShopProfileSettings>(fetch, '/settings/shop-profile', { token }).catch(() => null);
-			const intakePhotos = form.getAll('intakePhotos').filter((file): file is File => file instanceof File && file.size > 0);
-			const intakePhotoVisibility = form.getAll('intakePhotoVisibility').map((v) => String(v) === 'true');
-			if (settings?.requirePhotoEvidenceOnIntake && intakePhotos.length === 0) return fail(400, { success: false, messageKey: 'tickets.create.intakePhotoRequired' });
-			for (const file of intakePhotos) {
-				if (file.size > 5 * 1024 * 1024) return fail(400, { success: false, messageKey: 'tickets.create.intakePhotoTooLarge' });
-				if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type.toLowerCase())) {
-					return fail(400, { success: false, messageKey: 'tickets.create.intakePhotoTypeInvalid' });
-				}
+			if (!Number.isFinite(customerId) || customerId <= 0) {
+				return fail(400, { success: false, messageKey: 'tickets.create.customerRequired' });
+			}
+			if (deviceMode !== 'new' && (!Number.isFinite(deviceId) || deviceId <= 0)) {
+				return fail(400, { success: false, messageKey: 'tickets.create.deviceRequired' });
+			}
+			if (deviceMode === 'new' && (!newDevice?.deviceType || !newDevice?.brand || !newDevice?.model)) {
+				return fail(400, { success: false, messageKey: 'tickets.create.deviceDetailsRequired' });
 			}
 
 			const createdAtVal = nullable(form.get('createdAt'));
-			const createdAt = createdAtVal ? new Date(createdAtVal).toISOString() : null;
+			const createdAt = parseOptionalIso(createdAtVal);
+			if (createdAtVal && !createdAt) {
+				return fail(400, { success: false, messageKey: 'tickets.create.invalidDate' });
+			}
 			const scheduledStartVal = nullable(form.get('scheduledVisitStart'));
+			const scheduledVisitStart = parseOptionalIso(scheduledStartVal);
+			if (scheduledStartVal && !scheduledVisitStart) {
+				return fail(400, { success: false, messageKey: 'tickets.create.invalidDate' });
+			}
 			const scheduledEndVal = nullable(form.get('scheduledVisitEnd'));
+			const scheduledVisitEnd = parseOptionalIso(scheduledEndVal);
+			if (scheduledEndVal && !scheduledVisitEnd) {
+				return fail(400, { success: false, messageKey: 'tickets.create.invalidDate' });
+			}
 			const slaDueVal = nullable(form.get('slaDueAt'));
+			const slaDueAt = parseOptionalIso(slaDueVal);
+			if (slaDueVal && !slaDueAt) {
+				return fail(400, { success: false, messageKey: 'tickets.create.invalidDate' });
+			}
+
+			const settings = await serverApiRequest<ShopProfileSettings>(fetch, '/settings/shop-profile', { token }).catch(() => null);
+			const intakePhotos = deferAttachments
+				? []
+				: form.getAll('intakePhotos').filter((file): file is File => file instanceof File && file.size > 0);
+			const intakePhotoVisibility = deferAttachments
+				? []
+				: form.getAll('intakePhotoVisibility').map((v) => String(v) === 'true');
+			const intakePhotoTypes = deferAttachments
+				? []
+				: form.getAll('intakePhotoTypes').map((v) => String(v ?? '').trim() || 'Other');
+			const deferredCountRaw = Number(form.get('intakePhotoCount') ?? 0);
+			const intakePhotoCount = deferAttachments
+				? (Number.isFinite(deferredCountRaw) && deferredCountRaw > 0 ? Math.trunc(deferredCountRaw) : 0)
+				: intakePhotos.length;
+
+			if (settings?.requirePhotoEvidenceOnIntake && intakePhotoCount === 0) {
+				return fail(400, { success: false, messageKey: 'tickets.create.intakePhotoRequired' });
+			}
+
+			const normalizedPhotos: File[] = [];
+			for (const file of intakePhotos) {
+				if (file.size > MAX_INTAKE_PHOTO_BYTES) {
+					return fail(400, { success: false, messageKey: 'tickets.create.intakePhotoTooLarge' });
+				}
+				const mime = resolveSupportedImageMime(file);
+				if (!mime) {
+					return fail(400, { success: false, messageKey: 'tickets.create.intakePhotoTypeInvalid' });
+				}
+				normalizedPhotos.push(
+					file.type.toLowerCase() === mime
+						? file
+						: new File([file], file.name, { type: mime, lastModified: file.lastModified })
+				);
+			}
+
 			const additionalAssetIds = form
 				.getAll('additionalAssetIds')
 				.map((val) => Number(val))
@@ -123,37 +175,41 @@ export const actions: Actions = {
 					securityPattern: nullable(form.get('securityPattern')),
 					preRepairChecklist: null,
 					priority: String(form.get('priority') ?? 'Normal'),
-					assignedTechnicianUserId: numberOrNull(form.get('assignedTechnicianUserId')),
+					assignedTechnicianUserId: positiveIdOrNull(form.get('assignedTechnicianUserId')),
 					approvalRequired: form.get('approvalRequired') === 'on',
 					isPreApproved: form.get('isPreApproved') === 'on',
 					createdAt,
 					idempotencyKey: nullable(form.get('idempotencyKey')),
 					bannedCustomerOverrideReason: nullable(form.get('bannedCustomerOverrideReason')),
-					intakePhotoCount: intakePhotos.length,
+					intakePhotoCount,
 					isInternalWorkOrder: form.has('isInternalWorkOrderPresent') ? form.get('isInternalWorkOrder') === 'on' : null,
 					departmentCode: nullable(form.get('departmentCode')),
 					costCenter: nullable(form.get('costCenter')),
-					slaDueAt: slaDueVal ? new Date(slaDueVal).toISOString() : null,
+					slaDueAt,
 					serviceLocationType: nullable(form.get('serviceLocationType')),
-					siteLocationId: numberOrNull(form.get('siteLocationId')),
+					siteLocationId: positiveIdOrNull(form.get('siteLocationId')),
 					siteAddressSnapshot: nullable(form.get('siteAddressSnapshot')),
-					scheduledVisitStart: scheduledStartVal ? new Date(scheduledStartVal).toISOString() : null,
-					scheduledVisitEnd: scheduledEndVal ? new Date(scheduledEndVal).toISOString() : null,
+					scheduledVisitStart,
+					scheduledVisitEnd,
 					additionalAssetIds: additionalAssetIds.length > 0 ? additionalAssetIds : null,
 					customFields: ticketCustomFields,
 					inspections
 				}
 			});
-			for (let i = 0; i < intakePhotos.length; i++) {
-				const rawFile = intakePhotos[i];
-				const uploadFile =
-					rawFile.type.toLowerCase() === 'image/jpg'
-						? new File([rawFile], rawFile.name, { type: 'image/jpeg', lastModified: rawFile.lastModified })
-						: rawFile;
+
+			if (deferAttachments) {
+				return {
+					success: true,
+					ticketId: result.id,
+					ticketNumber: result.ticketNumber
+				};
+			}
+
+			for (let i = 0; i < normalizedPhotos.length; i++) {
 				const isPublicVisible = intakePhotoVisibility[i] ?? true;
 				const body = new FormData();
-				body.set('file', uploadFile);
-				body.set('attachmentType', 'Other');
+				body.set('file', normalizedPhotos[i]);
+				body.set('attachmentType', intakePhotoTypes[i] ?? 'Other');
 				body.set('isPublicVisible', isPublicVisible ? 'true' : 'false');
 				await serverApiRequest(fetch, `/service-tickets/${result.id}/attachments`, { method: 'POST', token, body });
 			}
@@ -172,9 +228,24 @@ function nullable(value: FormDataEntryValue | null) {
 	return text.length > 0 ? text : null;
 }
 
-function numberOrNull(value: FormDataEntryValue | null) {
+function positiveIdOrNull(value: FormDataEntryValue | null) {
 	const text = nullable(value);
-	return text ? Number(text) : null;
+	if (!text) return null;
+	const parsed = Number(text);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function nonNegativeNumberOrNull(value: FormDataEntryValue | null) {
+	const text = nullable(value);
+	if (!text) return null;
+	const parsed = Number(text);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function parseOptionalIso(value: string | null) {
+	if (!value) return null;
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 function extractPrefixedFields(form: FormData, prefix: string) {
