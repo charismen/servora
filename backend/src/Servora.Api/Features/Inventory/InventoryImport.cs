@@ -384,6 +384,31 @@ public static class InventoryImportParser
         ["locationNote"] = ["location", "location note", "lokasi"]
     };
 
+    private static readonly Dictionary<string, InventoryItemType> ItemTypeAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["sukucadang"] = InventoryItemType.SparePart,
+        ["aksesori"] = InventoryItemType.Accessory,
+        ["aksesoris"] = InventoryItemType.Accessory,
+        ["partbekas"] = InventoryItemType.SecondhandPart,
+        ["rakitanpcbekas"] = InventoryItemType.SecondhandPcBuild,
+        ["laptopbekas"] = InventoryItemType.SecondhandLaptop,
+        ["konsumabelservis"] = InventoryItemType.ServiceConsumable,
+        ["unitrekondisi"] = InventoryItemType.RefurbishedUnit,
+        ["unitrefurbished"] = InventoryItemType.RefurbishedUnit,
+        ["peralatan"] = InventoryItemType.Equipment,
+        ["alatperlengkapan"] = InventoryItemType.ToolOrSupply,
+        ["alatdanperlengkapan"] = InventoryItemType.ToolOrSupply,
+        ["alatbahan"] = InventoryItemType.ToolOrSupply,
+        ["toolsupply"] = InventoryItemType.ToolOrSupply
+    };
+
+    private static readonly Dictionary<string, InventoryCondition> ConditionAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["baru"] = InventoryCondition.New,
+        ["bekas"] = InventoryCondition.Used,
+        ["untukkanibal"] = InventoryCondition.ForParts
+    };
+
     public static IReadOnlyList<ParsedImportRow> Parse(
         Stream stream,
         string fileName,
@@ -416,8 +441,8 @@ public static class InventoryImportParser
 
             var categoryName = Get(row, index, "category");
             if (!string.IsNullOrWhiteSpace(categoryName) && !knownCategories.Contains(categoryName) && !autoCreateCategory) errors.Add("Category was not found.");
-            if (!TryEnum(Get(row, index, "itemType"), InventoryItemType.SparePart, out InventoryItemType itemType)) errors.Add("Invalid item type.");
-            if (!TryEnum(Get(row, index, "condition"), InventoryCondition.New, out InventoryCondition condition)) errors.Add("Invalid condition.");
+            if (!TryEnum(Get(row, index, "itemType"), InventoryItemType.SparePart, out InventoryItemType itemType, ItemTypeAliases)) errors.Add("Invalid item type.");
+            if (!TryEnum(Get(row, index, "condition"), InventoryCondition.New, out InventoryCondition condition, ConditionAliases)) errors.Add("Invalid condition.");
             var purchasePrice = Money(Get(row, index, "purchasePrice"), errors, "Purchase price");
             var shippingCost = Money(Get(row, index, "shippingCost"), errors, "Shipping cost");
             var serviceFee = Money(Get(row, index, "serviceFee"), errors, "Service fee");
@@ -474,7 +499,7 @@ public static class InventoryImportParser
     {
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
         var strings = ReadSharedStrings(archive);
-        var sheet = archive.GetEntry("xl/worksheets/sheet1.xml") ?? throw new InvalidOperationException("First worksheet was not found.");
+        var sheet = ResolveFirstWorksheet(archive) ?? throw new InvalidOperationException("First worksheet was not found.");
         using var sheetStream = sheet.Open();
         var doc = XDocument.Load(sheetStream);
         XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -491,6 +516,39 @@ public static class InventoryImportParser
         }).ToList();
     }
 
+    private static ZipArchiveEntry? ResolveFirstWorksheet(ZipArchive archive)
+    {
+        var workbookEntry = archive.GetEntry("xl/workbook.xml");
+        var relsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels");
+        if (workbookEntry is not null && relsEntry is not null)
+        {
+            using var workbookStream = workbookEntry.Open();
+            using var relsStream = relsEntry.Open();
+            var workbookDoc = XDocument.Load(workbookStream);
+            var relsDoc = XDocument.Load(relsStream);
+            XNamespace mainNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            XNamespace relNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+            var firstRelId = workbookDoc.Descendants(mainNs + "sheet").FirstOrDefault()?.Attribute(relNs + "id")?.Value;
+            if (!string.IsNullOrWhiteSpace(firstRelId))
+            {
+                var target = relsDoc.Root?.Elements()
+                    .FirstOrDefault(el => el.Attribute("Id")?.Value == firstRelId)?
+                    .Attribute("Target")?.Value;
+                if (!string.IsNullOrWhiteSpace(target))
+                {
+                    var normalized = target.Replace('\\', '/').TrimStart('/', '.');
+                    if (!normalized.StartsWith("xl/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        normalized = $"xl/{normalized}";
+                    }
+                    var resolved = archive.GetEntry(normalized);
+                    if (resolved is not null) return resolved;
+                }
+            }
+        }
+        return archive.GetEntry("xl/worksheets/sheet1.xml");
+    }
+
     private static List<string> ReadSharedStrings(ZipArchive archive)
     {
         var entry = archive.GetEntry("xl/sharedStrings.xml");
@@ -498,13 +556,28 @@ public static class InventoryImportParser
         using var stream = entry.Open();
         var doc = XDocument.Load(stream);
         XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-        return doc.Descendants(ns + "si").Select(si => string.Concat(si.Descendants(ns + "t").Select(t => t.Value))).ToList();
+        return doc.Descendants(ns + "si").Select(si => SharedStringText(si, ns)).ToList();
     }
+
+    private static string SharedStringText(XElement si, XNamespace ns) => string.Concat(
+        si.Elements()
+            .Where(el => el.Name == ns + "t" || el.Name == ns + "r")
+            .SelectMany(el => el.Name == ns + "t" ? [el] : el.Elements(ns + "t"))
+            .Select(t => t.Value));
 
     private static string CellText(XElement cell, XNamespace ns, IReadOnlyList<string> sharedStrings)
     {
+        var cellType = cell.Attribute("t")?.Value;
+        if (cellType == "inlineStr")
+        {
+            var inline = cell.Element(ns + "is");
+            return inline is null ? "" : string.Concat(inline.Descendants(ns + "t").Select(t => t.Value));
+        }
+
         var value = cell.Element(ns + "v")?.Value ?? "";
-        return cell.Attribute("t")?.Value == "s" && int.TryParse(value, out var index) && index < sharedStrings.Count ? sharedStrings[index] : value;
+        return cellType == "s" && int.TryParse(value, out var index) && index >= 0 && index < sharedStrings.Count
+            ? sharedStrings[index]
+            : value;
     }
 
     public static byte[] BuildXlsxTemplate()
@@ -617,12 +690,47 @@ public static class InventoryImportParser
     private static bool HasFraction(decimal value) => value != decimal.Truncate(value);
     private static string? Null(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static bool Bool(string value, bool fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value is "1" or "true" or "TRUE" or "yes" or "YES" or "on" or "ON";
-    private static bool TryEnum<T>(string value, T fallback, out T parsed) where T : struct
+    private static bool TryEnum<T>(string value, T fallback, out T parsed, IReadOnlyDictionary<string, T>? aliases = null) where T : struct, Enum
     {
         if (string.IsNullOrWhiteSpace(value)) { parsed = fallback; return true; }
-        return Enum.TryParse(value.Replace(" ", ""), true, out parsed);
+        var token = CollapseToken(value);
+        if (aliases is not null && aliases.TryGetValue(token, out parsed)) return true;
+        if (int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+        {
+            parsed = default;
+            return false;
+        }
+        return Enum.TryParse(token, true, out parsed) && Enum.IsDefined(parsed);
     }
-    private static int? NullableInt(string value, List<string> errors, string label) => string.IsNullOrWhiteSpace(value) ? null : int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) ? result : Error<int?>(errors, $"{label} is invalid.");
+
+    private static string CollapseToken(string value) =>
+        new(value.Where(ch => !char.IsWhiteSpace(ch) && ch is not ('-' or '_' or '/')).ToArray());
+
+    private static int? NullableInt(string value, List<string> errors, string label)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var clean = StripTrailingUnit(value.Trim(), "days", "day", "hari").Replace(",", "").Trim();
+        if (int.TryParse(clean, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intResult)) return intResult;
+        if (decimal.TryParse(clean, NumberStyles.Float, CultureInfo.InvariantCulture, out var decResult)
+            && decResult == decimal.Truncate(decResult)
+            && decResult is >= int.MinValue and <= int.MaxValue)
+        {
+            return (int)decResult;
+        }
+        return Error<int?>(errors, $"{label} is invalid.");
+    }
+
+    private static string StripTrailingUnit(string value, params string[] units)
+    {
+        foreach (var unit in units)
+        {
+            if (value.EndsWith(unit, StringComparison.OrdinalIgnoreCase))
+            {
+                return value[..^unit.Length].TrimEnd();
+            }
+        }
+        return value;
+    }
     private static decimal Money(string value, List<string> errors, string label, decimal fallback = 0) => string.IsNullOrWhiteSpace(value) ? fallback : NullableMoney(value, errors, label) ?? fallback;
     private static decimal? NullableMoney(string value, List<string> errors, string label)
     {
