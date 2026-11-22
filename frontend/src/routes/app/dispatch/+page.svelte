@@ -64,6 +64,12 @@
 		return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 	}
 
+	function diffMinutesHm(startHm: string, endHm: string): number {
+		const [sh, sm] = startHm.split(':').map(Number);
+		const [eh, em] = endHm.split(':').map(Number);
+		return (eh || 0) * 60 + (em || 0) - ((sh || 0) * 60 + (sm || 0));
+	}
+
 	const selectedDateObj = $derived(parseYmdLocal(filters.date));
 	const weekDays = $derived.by(() => {
 		const start = parseYmdLocal(filters.weekStart);
@@ -188,6 +194,17 @@
 	let submittingStatus = $state(false);
 	let modalConflicts = $state<DispatchConflict[]>([]);
 	let modalErrorMessage = $state('');
+	const currentDurationMinutes = $derived(diffMinutesHm(draftStartHm, draftEndHm));
+	const isInvalidTimeRange = $derived(currentDurationMinutes <= 0);
+
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape') return;
+		if (scheduleModalOpen) {
+			closeScheduleModal();
+		} else if (resourceModalOpen) {
+			resourceModalOpen = false;
+		}
+	}
 
 	function openTicketModal(
 		ticket: DispatchTicket,
@@ -360,6 +377,8 @@
 		}
 	});
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <div class="space-y-lg pb-xl">
 	<PageHeader
@@ -594,11 +613,14 @@
 											draggable={canWriteTickets}
 											ondragstart={(e) => handleDragStart(e, ticket)}
 											onclick={() => openTicketModal(ticket)}
-											style={`${blockStyle(ticket)} top: ${6 + (idx % 2) * 34}px; border-left-color: ${ticket.hasConflict ? '#dc2626' : ticket.statusColor};`}
-											class="absolute z-10 min-h-[56px] max-h-[72px] rounded-lg border border-l-4 px-2 py-1.5 text-left shadow-xs transition-all cursor-pointer overflow-hidden {ticket.hasConflict ? 'bg-rose-50 border-rose-300' : 'bg-white border-stone hover:border-ink'}"
+											style={`${blockStyle(ticket)} top: ${6 + (idx % 2) * 34}px;`}
+											class="absolute z-10 min-h-[56px] max-h-[72px] rounded-lg border px-2.5 py-1.5 text-left shadow-xs transition-all cursor-pointer overflow-hidden {ticket.hasConflict ? 'bg-error-container/60 border-error/40' : 'bg-white border-stone hover:border-ink'}"
 										>
 											<div class="flex items-center justify-between gap-1">
-												<span class="font-mono text-[11px] font-bold text-primary truncate">{ticket.ticketNumber}</span>
+												<span class="inline-flex items-center gap-1.5 min-w-0">
+													<span class="w-2 h-2 rounded-full shrink-0" style={`background-color: ${ticket.hasConflict ? '#8f2824' : ticket.statusColor};`}></span>
+													<span class="font-mono text-[11px] font-bold text-primary truncate">{ticket.ticketNumber}</span>
+												</span>
 												<div class="flex items-center gap-1 shrink-0">
 													{#if ticket.hasConflict}
 														<span class="px-1 py-0.2 rounded bg-rose-600 text-white text-[9px] font-bold uppercase">
@@ -684,12 +706,14 @@
 												draggable={canWriteTickets}
 												ondragstart={(e) => handleDragStart(e, ticket)}
 												onclick={() => openTicketModal(ticket)}
-												style={`border-left-color: ${ticket.hasConflict ? '#dc2626' : ticket.statusColor};`}
-												class="w-full rounded-md border border-l-4 px-2 py-1.5 text-left text-[11px] transition-all cursor-pointer {ticket.hasConflict ? 'bg-rose-50 border-rose-300' : 'bg-white border-stone hover:border-ink shadow-2xs'}"
+												class="w-full rounded-md border px-2 py-1.5 text-left text-[11px] transition-all cursor-pointer {ticket.hasConflict ? 'bg-error-container/60 border-error/40' : 'bg-white border-stone hover:border-ink shadow-2xs'}"
 											>
 												<div class="flex items-center justify-between gap-1">
-													<span class="font-mono font-bold text-primary truncate">
-														{ticket.scheduledVisitStart ? toHmLocal(new Date(ticket.scheduledVisitStart)) : ''}
+													<span class="inline-flex items-center gap-1.5 min-w-0">
+														<span class="w-1.5 h-1.5 rounded-full shrink-0" style={`background-color: ${ticket.hasConflict ? '#8f2824' : ticket.statusColor};`}></span>
+														<span class="font-mono font-bold text-primary truncate">
+															{ticket.scheduledVisitStart ? toHmLocal(new Date(ticket.scheduledVisitStart)) : ''}
+														</span>
 													</span>
 													{#if ticket.hasConflict}
 														<span class="w-2 h-2 rounded-full bg-rose-600 shrink-0" title={t('dispatch.conflictBadge')}></span>
@@ -827,16 +851,21 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4"
+		class="fixed inset-0 z-50 bg-ink/55 backdrop-blur-[2px] flex items-center justify-center p-4"
 		onclick={closeScheduleModal}
 	>
 		<div
-			class="w-full max-w-lg rounded-xl border border-stone bg-white p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto"
+			role="dialog"
+			aria-modal="true"
+			tabindex="-1"
+			aria-labelledby="dispatch-schedule-modal-title"
+			class="w-full max-w-xl rounded-2xl border border-stone bg-white shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
 			onclick={(e) => e.stopPropagation()}
 		>
-			<div class="flex items-start justify-between gap-2 border-b border-stone pb-3">
-				<div>
-					<h3 class="text-subheading font-bold text-primary m-0">
+			<!-- Modal Header -->
+			<div class="flex items-start justify-between gap-4 border-b border-stone px-6 py-4 bg-white">
+				<div class="min-w-0 space-y-1.5">
+					<h3 id="dispatch-schedule-modal-title" class="text-[20px] leading-tight font-bold text-primary tracking-tight m-0">
 						{#if modalMode === 'pm'}
 							{t('dispatch.modal.pmTitle')}
 						{:else if modalTicket?.scheduledVisitStart}
@@ -846,294 +875,110 @@
 						{/if}
 					</h3>
 					{#if modalTicket}
-						<p class="text-caption text-secondary mt-0.5 m-0">
-							<span class="font-mono font-bold text-primary">{modalTicket.ticketNumber}</span>
-							· {modalTicket.customerName} · {modalTicket.deviceSnapshot}
-						</p>
+						<div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-secondary">
+							<span class="inline-flex items-center rounded-md border border-stone bg-ash/70 px-2 py-0.5 font-mono text-[11px] font-semibold text-primary tabular-nums">
+								{modalTicket.ticketNumber}
+							</span>
+							<span class="font-medium text-primary">{modalTicket.customerName}</span>
+							<span class="text-lead" aria-hidden="true">·</span>
+							<span class="truncate max-w-full">{modalTicket.deviceSnapshot}</span>
+						</div>
 					{:else if modalPm}
-						<p class="text-caption text-secondary mt-0.5 m-0">
-							{modalPm.title} · {modalPm.assetName}
-						</p>
+						<div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-secondary">
+							<span class="font-semibold text-primary">{modalPm.title}</span>
+							<span class="text-lead" aria-hidden="true">·</span>
+							<span>{modalPm.assetName}</span>
+						</div>
 					{/if}
 				</div>
 				<button
 					type="button"
 					onclick={closeScheduleModal}
-					class="w-8 h-8 rounded-lg hover:bg-ash text-secondary hover:text-primary flex items-center justify-center cursor-pointer"
+					class="w-8 h-8 -mr-1 -mt-0.5 rounded-lg text-secondary hover:text-primary hover:bg-ash transition-colors flex items-center justify-center cursor-pointer shrink-0 focus:outline-none focus:ring-2 focus:ring-claytile/30"
 					aria-label={t('common.close')}
 				>
-					✕
+					<span class="material-symbols-outlined text-[20px]">close</span>
 				</button>
 			</div>
 
-			<!-- Live Visit Execution Bar (only for already-scheduled tickets) -->
-			{#if modalMode === 'ticket' && modalTicket?.scheduledVisitStart && canWriteTickets}
-				<div class="rounded-lg border border-stone bg-ash/30 p-3 space-y-2">
-					<div class="flex items-center justify-between gap-2">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary">{t('dispatch.modal.executionTitle')}</span>
-						<span class="px-2 py-0.5 rounded border text-[11px] font-semibold {dispatchStatusBadgeClass(modalTicket.dispatchStatus)}">
-							{t(`dispatch.status.${modalTicket.dispatchStatus}`)}
-						</span>
-					</div>
-					<div class="flex flex-wrap gap-1.5">
-						{#each [
-							{ status: 'EnRoute', label: t('dispatch.action.markEnRoute') },
-							{ status: 'ArrivedOnSite', label: t('dispatch.action.markArrived') },
-							{ status: 'VisitCompleted', label: t('dispatch.action.markCompleted') }
-						] as step}
-							<form
-								method="POST"
-								action="?/updateDispatchStatus"
-								class="inline"
-								use:enhance={() => {
-									submittingStatus = true;
-									return async ({ result, update }) => {
-										try {
-											if (result.type === 'error') {
-												toast.error(formatEnhanceUnexpectedError(result.error, t));
-												return;
+			<!-- Scrollable Body -->
+			<div class="overflow-y-auto px-6 py-5 space-y-5">
+				<!-- Live Visit Execution Bar (only for already-scheduled tickets) -->
+				{#if modalMode === 'ticket' && modalTicket?.scheduledVisitStart && canWriteTickets}
+					<div class="flex flex-wrap items-center justify-between gap-2.5 pb-4 border-b border-stone/70">
+						<div class="flex items-center gap-2">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-secondary">{t('dispatch.modal.executionTitle')}</span>
+							<span class="px-2 py-0.5 rounded-full border text-[11px] font-semibold {dispatchStatusBadgeClass(modalTicket.dispatchStatus)}">
+								{t(`dispatch.status.${modalTicket.dispatchStatus}`)}
+							</span>
+						</div>
+						<div class="flex flex-wrap gap-1.5">
+							{#each [
+								{ status: 'EnRoute', label: t('dispatch.action.markEnRoute') },
+								{ status: 'ArrivedOnSite', label: t('dispatch.action.markArrived') },
+								{ status: 'VisitCompleted', label: t('dispatch.action.markCompleted') }
+							] as step}
+								<form
+									method="POST"
+									action="?/updateDispatchStatus"
+									class="inline"
+									use:enhance={() => {
+										submittingStatus = true;
+										return async ({ result, update }) => {
+											try {
+												if (result.type === 'error') {
+													toast.error(formatEnhanceUnexpectedError(result.error, t));
+													return;
+												}
+												await update({ reset: false });
+											} finally {
+												submittingStatus = false;
 											}
-											await update({ reset: false });
-										} finally {
-											submittingStatus = false;
-										}
-									};
-								}}
-							>
-								<input type="hidden" name="ticketId" value={modalTicket.id} />
-								<input type="hidden" name="dispatchStatus" value={step.status} />
-								<button
-									type="submit"
-									disabled={submittingStatus || modalTicket.dispatchStatus === step.status}
-									class="h-8 px-3 rounded-button border border-stone bg-white hover:bg-ink hover:text-white text-caption font-semibold text-primary transition-colors cursor-pointer disabled:opacity-45"
+										};
+									}}
 								>
-									{step.label}
-								</button>
-							</form>
-						{/each}
+									<input type="hidden" name="ticketId" value={modalTicket.id} />
+									<input type="hidden" name="dispatchStatus" value={step.status} />
+									<button
+										type="submit"
+										disabled={submittingStatus || modalTicket.dispatchStatus === step.status}
+										class="h-8 px-3 rounded-button border border-stone bg-white hover:bg-ink hover:text-white hover:border-ink text-caption font-semibold text-primary transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+									>
+										{step.label}
+									</button>
+								</form>
+							{/each}
+						</div>
 					</div>
-				</div>
-			{/if}
-
-			{#if modalConflicts.length > 0}
-				<div class="rounded-lg border border-rose-300 bg-rose-50 p-3 space-y-2 text-caption text-rose-900">
-					<div class="font-bold flex items-center gap-1.5">
-						<span class="material-symbols-outlined text-[18px] text-rose-700">warning</span>
-						<span>{t('dispatch.conflictTitle')}</span>
-					</div>
-					<ul class="m-0 pl-5 space-y-1">
-						{#each modalConflicts as c (c.ticketId)}
-							<li>
-								<span class="font-mono font-bold">{c.ticketNumber}</span> ({c.customerName}) —
-								{formatDate(c.scheduledVisitStart, data.locale, { dateStyle: 'short', timeStyle: 'short' })}
-								· {c.conflictType}
-							</li>
-						{/each}
-					</ul>
-				</div>
-			{:else if modalErrorMessage}
-				<div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-caption text-rose-800">
-					{modalErrorMessage}
-				</div>
-			{/if}
-
-			<form
-				method="POST"
-				action={modalMode === 'pm' ? '?/scheduleMaintenance' : '?/scheduleTicket'}
-				class="space-y-3"
-				use:enhance={() => {
-					submittingSchedule = true;
-					return async ({ result, update }) => {
-						try {
-							if (result.type === 'error') {
-								toast.error(formatEnhanceUnexpectedError(result.error, t));
-								return;
-							}
-							await update({ reset: false });
-						} finally {
-							submittingSchedule = false;
-						}
-					};
-				}}
-			>
-				{#if modalMode === 'pm' && modalPm}
-					<input type="hidden" name="scheduleId" value={modalPm.id} />
-				{:else if modalTicket}
-					<input type="hidden" name="ticketId" value={modalTicket.id} />
 				{/if}
-				<input type="hidden" name="scheduledVisitStart" value={combineLocalIso(draftDate, draftStartHm)} />
-				<input type="hidden" name="scheduledVisitEnd" value={combineLocalIso(draftDate, draftEndHm)} />
 
-				<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">{t('dispatch.modal.technician')}</span>
-						<select
-							name="assignedTechnicianUserId"
-							bind:value={draftTechId}
-							class="w-full h-10 rounded-input border border-stone bg-white px-2.5 text-body-sm text-primary"
-						>
-							<option value="">{t('dispatch.modal.unassignedOption')}</option>
-							{#each technicians as tech (tech.userId)}
-								<option value={String(tech.userId)}>{tech.fullName}</option>
+				{#if modalConflicts.length > 0}
+					<div class="rounded-xl border border-error/30 bg-error-container px-4 py-3 space-y-1.5 text-caption text-on-error-container">
+						<div class="font-bold flex items-center gap-1.5">
+							<span class="material-symbols-outlined text-[18px]">warning</span>
+							<span>{t('dispatch.conflictTitle')}</span>
+						</div>
+						<ul class="m-0 pl-5 space-y-0.5">
+							{#each modalConflicts as c (c.ticketId)}
+								<li>
+									<span class="font-mono font-bold">{c.ticketNumber}</span> ({c.customerName}) —
+									{formatDate(c.scheduledVisitStart, data.locale, { dateStyle: 'short', timeStyle: 'short' })}
+									· {c.conflictType}
+								</li>
 							{/each}
-						</select>
-					</label>
-
-					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">{t('dispatch.modal.resource')}</span>
-						<select
-							name="serviceResourceId"
-							bind:value={draftResourceId}
-							class="w-full h-10 rounded-input border border-stone bg-white px-2.5 text-body-sm text-primary"
-						>
-							<option value="">{t('dispatch.modal.noResourceOption')}</option>
-							{#each activeResources as res (res.id)}
-								<option value={String(res.id)}>{res.name}{res.code ? ` (${res.code})` : ''}</option>
-							{/each}
-						</select>
-					</label>
-				</div>
-
-				<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">{t('dispatch.modal.date')}</span>
-						<input
-							type="date"
-							bind:value={draftDate}
-							required
-							class="w-full h-10 rounded-input border border-stone bg-white px-2.5 text-body-sm font-mono text-primary"
-						/>
-					</label>
-					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">{t('dispatch.modal.startTime')}</span>
-						<input
-							type="time"
-							bind:value={draftStartHm}
-							required
-							class="w-full h-10 rounded-input border border-stone bg-white px-2.5 text-body-sm font-mono text-primary"
-						/>
-					</label>
-					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">{t('dispatch.modal.endTime')}</span>
-						<input
-							type="time"
-							bind:value={draftEndHm}
-							required
-							class="w-full h-10 rounded-input border border-stone bg-white px-2.5 text-body-sm font-mono text-primary"
-						/>
-					</label>
-				</div>
-
-				<!-- Quick Duration Chips -->
-				<div class="flex flex-wrap items-center gap-1.5">
-					<span class="text-[11px] font-semibold text-secondary mr-1">{t('dispatch.modal.duration')}:</span>
-					{#each [
-						{ mins: 30, label: '30m' },
-						{ mins: 60, label: '1h' },
-						{ mins: 120, label: '2h' },
-						{ mins: 240, label: '4h' }
-					] as preset}
-						<button
-							type="button"
-							onclick={() => (draftEndHm = addMinutesToHm(draftStartHm, preset.mins))}
-							class="px-2 py-0.5 rounded border border-stone bg-ash/40 hover:bg-ash text-[11px] font-mono font-semibold text-primary cursor-pointer"
-						>
-							{preset.label}
-						</button>
-					{/each}
-				</div>
-
-				<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">{t('dispatch.modal.locationType')}</span>
-						<select
-							name="serviceLocationType"
-							bind:value={draftLocationType}
-							class="w-full h-10 rounded-input border border-stone bg-white px-2.5 text-body-sm text-primary"
-						>
-							<option value="InShop">{t('fieldService.inShop')}</option>
-							<option value="OnSite">{t('fieldService.onSite')}</option>
-							<option value="PickupDelivery">{t('fieldService.pickupDelivery')}</option>
-						</select>
-					</label>
-
-					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">{t('dispatch.modal.siteAddress')}</span>
-						<input
-							type="text"
-							name="siteAddressSnapshot"
-							bind:value={draftSiteAddress}
-							class="w-full h-10 rounded-input border border-stone bg-white px-2.5 text-body-sm text-primary"
-						/>
-					</label>
-				</div>
-
-				<label class="space-y-1 block">
-					<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">{t('dispatch.modal.dispatchNotes')}</span>
-					<textarea
-						name="dispatchNotes"
-						rows="2"
-						bind:value={draftNotes}
-						placeholder={t('dispatch.modal.dispatchNotesPlaceholder')}
-						class="w-full rounded-input border border-stone bg-white p-2.5 text-body-sm text-primary"
-					></textarea>
-				</label>
-
-				<div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone">
-					<div class="flex flex-wrap items-center gap-2">
-						{#if modalMode === 'ticket' && modalTicket}
-							<a
-								href={`/app/tickets/${modalTicket.id}`}
-								class="h-9 px-3 rounded-button border border-stone bg-white hover:bg-ash text-caption font-semibold text-primary inline-flex items-center gap-1"
-							>
-								<span class="material-symbols-outlined text-[15px]">open_in_new</span>
-								<span>{t('dispatch.modal.openTicket')}</span>
-							</a>
-						{/if}
-						{#if draftSiteAddress.trim()}
-							<a
-								href={mapsUrl(draftSiteAddress.trim())}
-								target="_blank"
-								rel="noopener noreferrer"
-								class="h-9 px-3 rounded-button border border-stone bg-white hover:bg-ash text-caption font-semibold text-primary inline-flex items-center gap-1"
-							>
-								<span class="material-symbols-outlined text-[15px]">map</span>
-								<span>{t('dispatch.modal.openMaps')}</span>
-							</a>
-						{/if}
+						</ul>
 					</div>
-
-					<div class="flex flex-wrap items-center gap-2">
-						{#if modalConflicts.length > 0}
-							<button
-								type="submit"
-								name="allowConflict"
-								value="true"
-								disabled={submittingSchedule}
-								class="h-9 px-4 rounded-button bg-rose-700 text-white hover:bg-rose-800 text-caption font-semibold cursor-pointer disabled:opacity-60"
-							>
-								{t('dispatch.conflictOverrideButton')}
-							</button>
-						{:else}
-							<button
-								type="submit"
-								name="allowConflict"
-								value="false"
-								disabled={submittingSchedule}
-								class="h-9 px-4 rounded-button bg-ink text-white hover:bg-ink/90 text-caption font-semibold cursor-pointer disabled:opacity-60"
-							>
-								{t('dispatch.modal.saveSchedule')}
-							</button>
-						{/if}
+				{:else if modalErrorMessage}
+					<div class="rounded-xl border border-error/30 bg-error-container px-4 py-2.5 text-caption text-on-error-container">
+						{modalErrorMessage}
 					</div>
-				</div>
-			</form>
+				{/if}
 
-			{#if modalMode === 'ticket' && modalTicket?.scheduledVisitStart && canWriteTickets}
 				<form
+					id="dispatch-schedule-form"
 					method="POST"
-					action="?/unscheduleTicket"
-					class="pt-2 border-t border-stone/70 flex justify-end"
+					action={modalMode === 'pm' ? '?/scheduleMaintenance' : '?/scheduleTicket'}
+					class="space-y-4"
 					use:enhance={() => {
 						submittingSchedule = true;
 						return async ({ result, update }) => {
@@ -1149,16 +994,260 @@
 						};
 					}}
 				>
-					<input type="hidden" name="ticketId" value={modalTicket.id} />
-					<button
-						type="submit"
-						disabled={submittingSchedule}
-						class="text-caption font-semibold text-rose-700 hover:underline cursor-pointer"
-					>
-						{t('dispatch.modal.unschedule')}
-					</button>
+					{#if modalMode === 'pm' && modalPm}
+						<input type="hidden" name="scheduleId" value={modalPm.id} />
+					{:else if modalTicket}
+						<input type="hidden" name="ticketId" value={modalTicket.id} />
+					{/if}
+					<input type="hidden" name="scheduledVisitStart" value={combineLocalIso(draftDate, draftStartHm)} />
+					<input type="hidden" name="scheduledVisitEnd" value={combineLocalIso(draftDate, draftEndHm)} />
+
+					<!-- Row 1: Assignment (Technician & Resource) -->
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 items-end">
+						<label class="space-y-1.5 block min-w-0">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block whitespace-nowrap truncate">
+								{t('dispatch.modal.technician')}
+							</span>
+							<div class="relative">
+								<select
+									name="assignedTechnicianUserId"
+									bind:value={draftTechId}
+									class="w-full h-10 appearance-none rounded-input border border-stone bg-white pl-3 pr-9 text-body-sm text-primary transition-colors hover:border-lead focus:outline-none focus:border-claytile focus:ring-2 focus:ring-claytile/20"
+								>
+									<option value="">{t('dispatch.modal.unassignedOption')}</option>
+									{#each technicians as tech (tech.userId)}
+										<option value={String(tech.userId)}>{tech.fullName}</option>
+									{/each}
+								</select>
+								<span class="material-symbols-outlined pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[18px] text-secondary">expand_more</span>
+							</div>
+						</label>
+
+						<label class="space-y-1.5 block min-w-0">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block whitespace-nowrap truncate">
+								{t('dispatch.modal.resource')}
+							</span>
+							<div class="relative">
+								<select
+									name="serviceResourceId"
+									bind:value={draftResourceId}
+									class="w-full h-10 appearance-none rounded-input border border-stone bg-white pl-3 pr-9 text-body-sm text-primary transition-colors hover:border-lead focus:outline-none focus:border-claytile focus:ring-2 focus:ring-claytile/20"
+								>
+									<option value="">{t('dispatch.modal.noResourceOption')}</option>
+									{#each activeResources as res (res.id)}
+										<option value={String(res.id)}>{res.name}{res.code ? ` (${res.code})` : ''}</option>
+									{/each}
+								</select>
+								<span class="material-symbols-outlined pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[18px] text-secondary">expand_more</span>
+							</div>
+						</label>
+					</div>
+
+					<!-- Row 2: Visit Window Band (Date + Start/End Time + Quick Duration) -->
+					<div class="-mx-6 px-6 py-4 bg-ash/35 border-y border-stone/70 space-y-3">
+						<div class="grid grid-cols-1 sm:grid-cols-[1.35fr_1fr_1fr] gap-3 items-end">
+							<label class="space-y-1.5 block min-w-0">
+								<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block whitespace-nowrap truncate">
+									{t('dispatch.modal.date')}
+								</span>
+								<input
+									type="date"
+									bind:value={draftDate}
+									required
+									class="w-full h-10 rounded-input border border-stone bg-white px-3 text-body-sm font-mono tabular-nums text-primary transition-colors hover:border-lead focus:outline-none focus:border-claytile focus:ring-2 focus:ring-claytile/20"
+								/>
+							</label>
+							<label class="space-y-1.5 block min-w-0">
+								<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block whitespace-nowrap truncate">
+									{t('dispatch.modal.startTime')}
+								</span>
+								<input
+									type="time"
+									bind:value={draftStartHm}
+									required
+									class="w-full h-10 rounded-input border border-stone bg-white px-3 text-body-sm font-mono tabular-nums text-primary transition-colors hover:border-lead focus:outline-none focus:border-claytile focus:ring-2 focus:ring-claytile/20"
+								/>
+							</label>
+							<label class="space-y-1.5 block min-w-0">
+								<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block whitespace-nowrap truncate">
+									{t('dispatch.modal.endTime')}
+								</span>
+								<input
+									type="time"
+									bind:value={draftEndHm}
+									required
+									class="w-full h-10 rounded-input border {isInvalidTimeRange ? 'border-error focus:border-error focus:ring-error/20' : 'border-stone hover:border-lead focus:border-claytile focus:ring-claytile/20'} bg-white px-3 text-body-sm font-mono tabular-nums text-primary transition-colors focus:outline-none focus:ring-2"
+								/>
+							</label>
+						</div>
+
+						{#if isInvalidTimeRange}
+							<p class="text-caption text-error font-medium m-0">{t('dispatch.modal.invalidTimeRange')}</p>
+						{/if}
+
+						<!-- Quick Duration Chips -->
+						<div class="flex flex-wrap items-center gap-2">
+							<span class="text-[11px] font-semibold text-secondary">{t('dispatch.modal.duration')}:</span>
+							<div class="inline-flex flex-wrap items-center gap-1.5">
+								{#each [
+									{ mins: 30, label: '30m' },
+									{ mins: 60, label: '1h' },
+									{ mins: 120, label: '2h' },
+									{ mins: 240, label: '4h' }
+								] as preset}
+									{@const active = currentDurationMinutes === preset.mins}
+									<button
+										type="button"
+										aria-pressed={active}
+										onclick={() => (draftEndHm = addMinutesToHm(draftStartHm, preset.mins))}
+										class="h-7 px-2.5 rounded-md border text-[11px] font-mono font-semibold tabular-nums transition-colors cursor-pointer {active
+											? 'bg-ink text-white border-ink shadow-2xs'
+											: 'bg-white text-primary border-stone hover:border-lead hover:bg-ash/60'}"
+									>
+										{preset.label}
+									</button>
+								{/each}
+							</div>
+						</div>
+					</div>
+
+					<!-- Row 3: Location & Site Address -->
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 items-end">
+						<label class="space-y-1.5 block min-w-0">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block whitespace-nowrap truncate">
+								{t('dispatch.modal.locationType')}
+							</span>
+							<div class="relative">
+								<select
+									name="serviceLocationType"
+									bind:value={draftLocationType}
+									class="w-full h-10 appearance-none rounded-input border border-stone bg-white pl-3 pr-9 text-body-sm text-primary transition-colors hover:border-lead focus:outline-none focus:border-claytile focus:ring-2 focus:ring-claytile/20"
+								>
+									<option value="InShop">{t('fieldService.inShop')}</option>
+									<option value="OnSite">{t('fieldService.onSite')}</option>
+									<option value="PickupDelivery">{t('fieldService.pickupDelivery')}</option>
+								</select>
+								<span class="material-symbols-outlined pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[18px] text-secondary">expand_more</span>
+							</div>
+						</label>
+
+						<label class="space-y-1.5 block min-w-0">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block whitespace-nowrap truncate">
+								{t('dispatch.modal.siteAddress')}
+							</span>
+							<input
+								type="text"
+								name="siteAddressSnapshot"
+								bind:value={draftSiteAddress}
+								class="w-full h-10 rounded-input border border-stone bg-white px-3 text-body-sm text-primary transition-colors hover:border-lead focus:outline-none focus:border-claytile focus:ring-2 focus:ring-claytile/20"
+							/>
+						</label>
+					</div>
+
+					<!-- Row 4: Dispatch Notes -->
+					<label class="space-y-1.5 block">
+						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary block">
+							{t('dispatch.modal.dispatchNotes')}
+						</span>
+						<textarea
+							name="dispatchNotes"
+							rows="3"
+							bind:value={draftNotes}
+							placeholder={t('dispatch.modal.dispatchNotesPlaceholder')}
+							class="w-full min-h-[84px] rounded-input border border-stone bg-white px-3 py-2.5 text-body-sm text-primary placeholder:text-lead transition-colors hover:border-lead focus:outline-none focus:border-claytile focus:ring-2 focus:ring-claytile/20 resize-y"
+						></textarea>
+					</label>
 				</form>
-			{/if}
+			</div>
+
+			<!-- Modal Footer -->
+			<div class="flex flex-wrap items-center justify-between gap-3 border-t border-stone bg-ash/25 px-6 py-3.5">
+				<div class="flex flex-wrap items-center gap-2">
+					{#if modalMode === 'ticket' && modalTicket}
+						<a
+							href={`/app/tickets/${modalTicket.id}`}
+							class="h-9 px-3 rounded-button border border-stone bg-white hover:bg-ash text-caption font-semibold text-primary inline-flex items-center gap-1.5 transition-colors"
+						>
+							<span class="material-symbols-outlined text-[16px] text-secondary">open_in_new</span>
+							<span>{t('dispatch.modal.openTicket')}</span>
+						</a>
+					{/if}
+					{#if draftSiteAddress.trim()}
+						<a
+							href={mapsUrl(draftSiteAddress.trim())}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="h-9 px-3 rounded-button border border-stone bg-white hover:bg-ash text-caption font-semibold text-primary inline-flex items-center gap-1.5 transition-colors"
+						>
+							<span class="material-symbols-outlined text-[16px] text-secondary">map</span>
+							<span>{t('dispatch.modal.openMaps')}</span>
+						</a>
+					{/if}
+					{#if modalMode === 'ticket' && modalTicket?.scheduledVisitStart && canWriteTickets}
+						<form
+							method="POST"
+							action="?/unscheduleTicket"
+							class="inline"
+							use:enhance={() => {
+								submittingSchedule = true;
+								return async ({ result, update }) => {
+									try {
+										if (result.type === 'error') {
+											toast.error(formatEnhanceUnexpectedError(result.error, t));
+											return;
+										}
+										await update({ reset: false });
+									} finally {
+										submittingSchedule = false;
+									}
+								};
+							}}
+						>
+							<input type="hidden" name="ticketId" value={modalTicket.id} />
+							<button
+								type="submit"
+								disabled={submittingSchedule}
+								class="h-9 px-2.5 rounded-button text-caption font-semibold text-error hover:bg-error-container/70 transition-colors cursor-pointer disabled:opacity-50"
+							>
+								{t('dispatch.modal.unschedule')}
+							</button>
+						</form>
+					{/if}
+				</div>
+
+				<div class="flex items-center gap-2 ml-auto">
+					<button
+						type="button"
+						onclick={closeScheduleModal}
+						class="h-9 px-3.5 rounded-button border border-stone bg-white hover:bg-ash text-caption font-medium text-secondary hover:text-primary transition-colors cursor-pointer"
+					>
+						{t('settings.cancel')}
+					</button>
+					{#if modalConflicts.length > 0}
+						<button
+							type="submit"
+							form="dispatch-schedule-form"
+							name="allowConflict"
+							value="true"
+							disabled={submittingSchedule || isInvalidTimeRange}
+							class="h-9 px-4 rounded-button bg-error text-white hover:bg-error/90 text-caption font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed"
+						>
+							{t('dispatch.conflictOverrideButton')}
+						</button>
+					{:else}
+						<button
+							type="submit"
+							form="dispatch-schedule-form"
+							name="allowConflict"
+							value="false"
+							disabled={submittingSchedule || isInvalidTimeRange}
+							class="h-9 px-4 rounded-button bg-ink text-white hover:bg-ink/90 text-caption font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed"
+						>
+							{t('dispatch.modal.saveSchedule')}
+						</button>
+					{/if}
+				</div>
+			</div>
 		</div>
 	</div>
 {/if}
@@ -1168,25 +1257,28 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4"
+		class="fixed inset-0 z-50 bg-ink/55 backdrop-blur-[2px] flex items-center justify-center p-4"
 		onclick={() => (resourceModalOpen = false)}
 	>
 		<div
-			class="w-full max-w-xl rounded-xl border border-stone bg-white p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto"
+			role="dialog"
+			aria-modal="true"
+			tabindex="-1"
+			class="w-full max-w-xl rounded-2xl border border-stone bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
 			onclick={(e) => e.stopPropagation()}
 		>
-			<div class="flex items-start justify-between gap-2 border-b border-stone pb-3">
+			<div class="flex items-start justify-between gap-4 border-b border-stone pb-3">
 				<div>
-					<h3 class="text-subheading font-bold text-primary m-0">{t('dispatch.resources.title')}</h3>
+					<h3 class="text-[20px] leading-tight font-bold text-primary tracking-tight m-0">{t('dispatch.resources.title')}</h3>
 					<p class="text-caption text-secondary mt-0.5 m-0">{t('dispatch.resources.subtitle')}</p>
 				</div>
 				<button
 					type="button"
 					onclick={() => (resourceModalOpen = false)}
-					class="w-8 h-8 rounded-lg hover:bg-ash text-secondary hover:text-primary flex items-center justify-center cursor-pointer"
+					class="w-8 h-8 -mr-1 -mt-0.5 rounded-lg hover:bg-ash text-secondary hover:text-primary flex items-center justify-center cursor-pointer shrink-0 transition-colors"
 					aria-label={t('common.close')}
 				>
-					✕
+					<span class="material-symbols-outlined text-[20px]">close</span>
 				</button>
 			</div>
 
