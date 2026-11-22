@@ -17,7 +17,8 @@
 		showPhotoNotes: true,
 		showQrCode: true,
 		showPhoneNumber: true,
-		showPaymentSummary: true
+		showPaymentSummary: true,
+		showPaymentQrCode: false
 	});
 
 	let activePaperFormat = $state<'a4' | 'thermal'>('a4');
@@ -54,6 +55,8 @@
 		showQrCode: settings.showQrCode,
 		showPhoneNumber: settings.showPhoneNumber,
 		showPaymentSummary: settings.showPaymentSummary,
+		showPaymentQrCode: Boolean(settings.showPaymentQrCode),
+		activePaymentUrl: settings.showPaymentQrCode ? 'https://checkout.example.com/pay/sample-invoice' : null,
 		paymentStatus: 'Partial',
 		currencyCode: previewCurrency,
 		workItemsSubtotal: sampleWorkPrice,
@@ -174,6 +177,14 @@
 							<div>
 								<span class="font-semibold text-primary text-body-sm block">{t('settings.showPaymentSummary')}</span>
 								<span class="text-[11px] text-secondary block mt-0.5">{t('settings.showPaymentSummaryHint')}</span>
+							</div>
+						</label>
+
+						<label class="flex items-start gap-sm rounded-xl border border-stone bg-ash/30 p-sm sm:p-md text-body-sm text-secondary hover:bg-ash/60 transition-colors cursor-pointer select-none">
+							<input type="checkbox" name="showPaymentQrCode" bind:checked={settings.showPaymentQrCode} class="mt-0.5 rounded border-stone text-primary focus:ring-primary" />
+							<div>
+								<span class="font-semibold text-primary text-body-sm block">{t('settings.showPaymentQrCode')}</span>
+								<span class="text-[11px] text-secondary block mt-0.5">{t('settings.showPaymentQrCodeHint')}</span>
 							</div>
 						</label>
 					</div>

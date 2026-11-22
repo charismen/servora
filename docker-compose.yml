@@ -51,6 +51,7 @@ services:
       Jwt__Issuer: ${JWT_ISSUER:-ServoraApi}
       Jwt__Audience: ${JWT_AUDIENCE:-ServoraClients}
       Jwt__Key: ${JWT_KEY:-change-me-to-a-long-random-secret-key-at-least-32-chars}
+      Security__SecretEncryptionKey: ${SECRET_ENCRYPTION_KEY:-}
       PublicFrontendBaseUrl: ${PUBLIC_FRONTEND_BASE_URL:-http://localhost:3000}
       Cors__AllowedOrigins__0: http://localhost:3000
       Cors__AllowedOrigins__1: http://127.0.0.1:3000

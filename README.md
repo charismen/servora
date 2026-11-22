@@ -139,6 +139,7 @@ See [`.env.example`](.env.example) for a complete template:
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `root` / — / `servora` | MySQL credentials and database name |
 | `JWT_KEY` | — | Symmetric HMAC-SHA256 signing secret (use 32+ random characters in production) |
 | `JWT_ISSUER` / `JWT_AUDIENCE` | `ServoraApi` / `ServoraClients` | JWT issuer and audience validation values |
+| `SECRET_ENCRYPTION_KEY` | — | AES-256-GCM key (`Security:SecretEncryptionKey`, 32-byte base64 or long passphrase) required in Production to encrypt per-workspace payment gateway credentials |
 | `SEED_RUN_ON_STARTUP` | `true` | Apply EF Core migrations and seed roles, permissions, and initial admin on boot |
 | `SEED_INCLUDE_DEMO_DATA` | `false` | Seed starter demo records and a secondary internal maintenance workspace |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin@example.com` / `Admin123!` | Initial Owner/Admin bootstrap account |

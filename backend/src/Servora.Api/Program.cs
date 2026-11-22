@@ -6,6 +6,7 @@ using Servora.Api.Features.Blueprints;
 using Servora.Api.Features.Customers;
 using Servora.Api.Features.Devices;
 using Servora.Api.Features.Maintenance;
+using Servora.Api.Features.Payments;
 using Servora.Api.Features.Organizations;
 using Servora.Api.Features.ServiceStatuses;
 using Servora.Api.Features.ServiceTemplates;
@@ -23,6 +24,7 @@ using Servora.Api.Infrastructure.Data;
 using Servora.Api.Infrastructure.Data.Interceptors;
 using Servora.Api.Infrastructure.Data.Seed;
 using Servora.Api.Infrastructure.Exceptions;
+using Servora.Api.Infrastructure.Security;
 using FluentValidation;
 using Hangfire;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -191,6 +193,23 @@ builder.Services.AddSignalR();
 
 builder.Services.AddHttpClient("ExternalApi")
     .AddStandardResilienceHandler();
+builder.Services.AddHttpClient(XenditGatewayAdapter.HttpClientName, client =>
+{
+    client.BaseAddress = new Uri("https://api.xendit.co/");
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
+builder.Services.AddHttpClient(StripeGatewayAdapter.HttpClientName, client =>
+{
+    client.BaseAddress = new Uri("https://api.stripe.com/");
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
+
+builder.Services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
+builder.Services.AddScoped<IPaymentGateway, XenditGatewayAdapter>();
+builder.Services.AddScoped<IPaymentGateway, StripeGatewayAdapter>();
+builder.Services.AddScoped<IPaymentGatewayRegistry, PaymentGatewayRegistry>();
+builder.Services.AddScoped<PaymentCheckoutService>();
+builder.Services.AddScoped<PaymentIntentExpiryJob>();
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -252,6 +271,10 @@ if (hangfireEnabled)
         "preventive-maintenance-scan",
         job => job.ProcessDueSchedulesAsync(CancellationToken.None, null),
         Cron.Hourly);
+    recurringJobManager.AddOrUpdate<PaymentIntentExpiryJob>(
+        "payment-intent-expiry-sweep",
+        job => job.ExpirePastDueIntentsAsync(CancellationToken.None),
+        "*/15 * * * *");
 }
 
 app.UseExceptionHandler();
@@ -299,6 +322,7 @@ BlueprintEndpoints.MapEndpoint(versionedGroup);
 GetShopProfileSettings.MapEndpoint(versionedGroup);
 UpdateShopProfileSettings.MapEndpoint(versionedGroup);
 PrintTemplateSettingsEndpoints.MapEndpoint(versionedGroup);
+PaymentGatewayEndpoints.MapEndpoint(versionedGroup);
 if (!app.Environment.IsProduction())
 {
     Servora.Api.Features.Identity.Auth.DemoAccounts.MapEndpoint(versionedGroup);

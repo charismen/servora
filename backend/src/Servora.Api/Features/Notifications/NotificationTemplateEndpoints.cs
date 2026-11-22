@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Servora.Api.Features.Identity.Permissions;
+using Servora.Api.Features.Payments;
 using Servora.Api.Features.Settings;
 using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Infrastructure.Activity;
@@ -274,6 +275,16 @@ public static class NotificationTemplateEndpoints
         {
             publicBaseUrl = "http://localhost:5173";
         }
+        var now = DateTimeOffset.UtcNow;
+        var activePaymentUrl = await context.PaymentCheckoutIntents.AsNoTracking()
+            .Where(x => x.ShopId == shopId
+                && x.ServiceTicketId == ticket.Id
+                && x.Status == PaymentCheckoutStatus.Pending
+                && x.ExpiresAt > now)
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => x.PaymentUrl)
+            .FirstOrDefaultAsync(cancellationToken);
+
         var replacements = new Dictionary<string, string>
         {
             ["customer_name"] = ticket.CustomerNameSnapshot,
@@ -288,6 +299,7 @@ public static class NotificationTemplateEndpoints
             ["shop_name"] = settings.ShopName,
             ["shop_phone"] = settings.WhatsAppNumber,
             ["ticket_url"] = $"{publicBaseUrl.TrimEnd('/')}/track/{ticket.PublicTrackingToken}",
+            ["payment_url"] = activePaymentUrl ?? string.Empty,
             ["approval_status"] = approvalStatus
         };
 

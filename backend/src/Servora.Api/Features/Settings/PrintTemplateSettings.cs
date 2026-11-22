@@ -7,7 +7,8 @@ public sealed record PrintTemplateSettings(
     bool ShowPhotoNotes,
     bool ShowQrCode,
     bool ShowPhoneNumber,
-    bool ShowPaymentSummary = true);
+    bool ShowPaymentSummary = true,
+    bool ShowPaymentQrCode = false);
 
 public static class PrintTemplateSettingKeys
 {
@@ -18,6 +19,7 @@ public static class PrintTemplateSettingKeys
     public const string ShowQrCode = "PrintTemplate.ShowQrCode";
     public const string ShowPhoneNumber = "PrintTemplate.ShowPhoneNumber";
     public const string ShowPaymentSummary = "PrintTemplate.ShowPaymentSummary";
+    public const string ShowPaymentQrCode = "PrintTemplate.ShowPaymentQrCode";
 
     public static readonly IReadOnlyDictionary<string, string> Defaults = new Dictionary<string, string>
     {
@@ -27,6 +29,7 @@ public static class PrintTemplateSettingKeys
         [ShowPhotoNotes] = "true",
         [ShowQrCode] = "true",
         [ShowPhoneNumber] = "true",
-        [ShowPaymentSummary] = "true"
+        [ShowPaymentSummary] = "true",
+        [ShowPaymentQrCode] = "false"
     };
 }

@@ -2185,6 +2185,282 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.ToTable("organization_users", (string)null);
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Payments.PaymentCheckoutIntent", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("CurrencyCode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("varchar(10)")
+                        .HasColumnName("currency_code");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("environment");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("ExternalReference")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("varchar(120)")
+                        .HasColumnName("external_reference");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<DateTimeOffset?>("PaidAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("paid_at");
+
+                    b.Property<string>("PaymentUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(1000)")
+                        .HasColumnName("payment_url");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("ProviderCheckoutId")
+                        .HasMaxLength(160)
+                        .HasColumnType("varchar(160)")
+                        .HasColumnName("provider_checkout_id");
+
+                    b.Property<string>("ProviderPaymentMethod")
+                        .HasMaxLength(80)
+                        .HasColumnType("varchar(80)")
+                        .HasColumnName("provider_payment_method");
+
+                    b.Property<string>("QrPayload")
+                        .HasColumnType("text")
+                        .HasColumnName("qr_payload");
+
+                    b.Property<int>("ServiceTicketId")
+                        .HasColumnType("int")
+                        .HasColumnName("service_ticket_id");
+
+                    b.Property<int?>("SettledPaymentRecordId")
+                        .HasColumnType("int")
+                        .HasColumnName("settled_payment_record_id");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("Pending")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("ServiceTicketId");
+
+                    b.HasIndex("SettledPaymentRecordId");
+
+                    b.HasIndex("ShopId", "ExternalReference")
+                        .IsUnique();
+
+                    b.HasIndex("ShopId", "ProviderCheckoutId");
+
+                    b.HasIndex("Status", "ExpiresAt");
+
+                    b.HasIndex("ShopId", "ServiceTicketId", "Status");
+
+                    b.ToTable("payment_checkout_intents", (string)null);
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Payments.PaymentWebhookEvent", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("error_message");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("varchar(80)")
+                        .HasColumnName("event_type");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("processed_at");
+
+                    b.Property<string>("ProcessingStatus")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("processing_status");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("ProviderEventId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("varchar(160)")
+                        .HasColumnName("provider_event_id");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("received_at");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShopId", "Provider", "ProviderEventId")
+                        .IsUnique();
+
+                    b.ToTable("payment_webhook_events", (string)null);
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Payments.WorkspacePaymentGateway", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ApiKeyEncrypted")
+                        .HasColumnType("text")
+                        .HasColumnName("api_key_encrypted");
+
+                    b.Property<string>("ApiKeyLast4")
+                        .HasMaxLength(8)
+                        .HasColumnType("varchar(8)")
+                        .HasColumnName("api_key_last4");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<int>("DefaultLinkExpiryHours")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(24)
+                        .HasColumnName("default_link_expiry_hours");
+
+                    b.Property<bool>("EnablePublicTrackingPayment")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("enable_public_tracking_payment");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("Sandbox")
+                        .HasColumnName("environment");
+
+                    b.Property<bool>("IsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_enabled");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("None")
+                        .HasColumnName("provider");
+
+                    b.Property<bool>("RequirePhoneVerificationForPublicPayment")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(true)
+                        .HasColumnName("require_phone_verification_for_public_payment");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("WebhookSecretEncrypted")
+                        .HasColumnType("text")
+                        .HasColumnName("webhook_secret_encrypted");
+
+                    b.Property<string>("WebhookSecretLast4")
+                        .HasMaxLength(8)
+                        .HasColumnType("varchar(8)")
+                        .HasColumnName("webhook_secret_last4");
+
+                    b.Property<string>("WebhookToken")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("webhook_token");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShopId")
+                        .IsUnique();
+
+                    b.HasIndex("WebhookToken")
+                        .IsUnique();
+
+                    b.ToTable("workspace_payment_gateways", (string)null);
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Payroll.BonusType", b =>
                 {
                     b.Property<int>("Id")
@@ -2649,7 +2925,7 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<int>("UpdatedByUserId")
+                    b.Property<int?>("UpdatedByUserId")
                         .HasColumnType("int");
 
                     b.Property<string>("VoidReason")
@@ -4072,6 +4348,61 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Payments.PaymentCheckoutIntent", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Identity.Users.ApplicationUser", "CreatedByUser")
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Servora.Api.Features.ServiceTickets.ServiceTicket", "ServiceTicket")
+                        .WithMany()
+                        .HasForeignKey("ServiceTicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Servora.Api.Features.ServiceTickets.PaymentRecord", "SettledPaymentRecord")
+                        .WithMany()
+                        .HasForeignKey("SettledPaymentRecordId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CreatedByUser");
+
+                    b.Navigation("ServiceTicket");
+
+                    b.Navigation("SettledPaymentRecord");
+
+                    b.Navigation("Shop");
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Payments.PaymentWebhookEvent", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Shop");
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Payments.WorkspacePaymentGateway", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Shop");
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Payroll.FreelanceProfile", b =>
                 {
                     b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
@@ -4245,8 +4576,7 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.HasOne("Servora.Api.Features.Identity.Users.ApplicationUser", "UpdatedByUser")
                         .WithMany()
                         .HasForeignKey("UpdatedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("Servora.Api.Features.Identity.Users.ApplicationUser", "VoidedByUser")
                         .WithMany()

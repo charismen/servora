@@ -37,4 +37,5 @@ export type PrintTemplateSettings = {
 	showQrCode: boolean;
 	showPhoneNumber: boolean;
 	showPaymentSummary: boolean;
+	showPaymentQrCode?: boolean;
 };

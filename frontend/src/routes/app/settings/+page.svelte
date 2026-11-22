@@ -266,6 +266,13 @@
 			<span class="material-symbols-outlined text-[17px]">chat_bubble</span>
 			<span>{t('settings.whatsappTemplates')}</span>
 		</a>
+		<a
+			href="/app/settings/payment-gateway"
+			class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-caption font-medium whitespace-nowrap transition-all shrink-0 text-secondary hover:text-primary hover:bg-ash cursor-pointer"
+		>
+			<span class="material-symbols-outlined text-[17px]">credit_card</span>
+			<span>{t('settings.paymentGateway')}</span>
+		</a>
 	</nav>
 
 	<!-- Settings Form Area -->

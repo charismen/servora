@@ -324,4 +324,6 @@ export interface TicketReceipt {
 	terminology?: TerminologyConfig | null;
 	featureConfig?: WorkspaceFeatureConfig | null;
 	printInspections?: TicketInspectionDto[];
+	showPaymentQrCode?: boolean;
+	activePaymentUrl?: string | null;
 }

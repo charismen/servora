@@ -28,6 +28,14 @@
 		)
 	);
 	const qrUrl = $derived(`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(publicTrackingUrl)}`);
+	const paymentQrUrl = $derived(
+		receipt.activePaymentUrl
+			? `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(receipt.activePaymentUrl)}`
+			: ''
+	);
+	const canShowPaymentQr = $derived(
+		Boolean(receipt.showPaymentQrCode && receipt.activePaymentUrl && !receipt.isInternalWorkOrder && features.showBillingAndPayments)
+	);
 	const logoUrl = $derived(apiAssetUrl(receipt.logoUrl));
 	const currencyCode = $derived(receipt.currencyCode || 'IDR');
 	const workItems = $derived(receipt.workItems ?? []);
@@ -315,6 +323,15 @@
 			</div>
 		{/if}
 
+		<!-- Online Payment QR Code -->
+		{#if canShowPaymentQr}
+			<div class="py-3 text-center border-b border-dashed border-stone space-y-1">
+				<img class="receipt-qr mx-auto h-[120px] w-[120px]" src={paymentQrUrl} alt={t('receipt.scanToPay')} />
+				<span class="text-[10px] text-primary font-semibold block">{t('receipt.scanToPay')}</span>
+				<span class="text-[9px] text-secondary font-mono break-all block">{receipt.activePaymentUrl}</span>
+			</div>
+		{/if}
+
 		<!-- Footer Terms -->
 		<div class="pt-3 text-[10px] text-secondary text-center space-y-1.5 whitespace-pre-line leading-normal">
 			{#if receipt.receiptFooter}
@@ -576,13 +593,26 @@
 			</div>
 
 			<!-- QR Code Block -->
-			{#if receipt.showQrCode && !receipt.isInternalWorkOrder}
-				<div class="border border-stone rounded-xl p-4 text-center bg-ash/30 flex flex-col items-center justify-between h-fit self-start space-y-2">
-					<div>
-						<img class="receipt-qr mx-auto h-[160px] w-[160px] rounded bg-white p-1 border border-stone/40" src={qrUrl} alt={t('receipt.qrAlt')} />
-						<span class="text-caption font-semibold text-primary block mt-2">{t('receipt.scanForLiveStatus')}</span>
-					</div>
-					<p class="text-[10px] font-mono text-secondary break-all">{publicTrackingUrl}</p>
+			{#if (receipt.showQrCode && !receipt.isInternalWorkOrder) || canShowPaymentQr}
+				<div class="space-y-3 h-fit self-start">
+					{#if receipt.showQrCode && !receipt.isInternalWorkOrder}
+						<div class="border border-stone rounded-xl p-4 text-center bg-ash/30 flex flex-col items-center justify-between space-y-2">
+							<div>
+								<img class="receipt-qr mx-auto h-[160px] w-[160px] rounded bg-white p-1 border border-stone/40" src={qrUrl} alt={t('receipt.qrAlt')} />
+								<span class="text-caption font-semibold text-primary block mt-2">{t('receipt.scanForLiveStatus')}</span>
+							</div>
+							<p class="text-[10px] font-mono text-secondary break-all">{publicTrackingUrl}</p>
+						</div>
+					{/if}
+					{#if canShowPaymentQr}
+						<div class="border border-claytile/40 rounded-xl p-4 text-center bg-tertiary-container/30 flex flex-col items-center justify-between space-y-2">
+							<div>
+								<img class="receipt-qr mx-auto h-[160px] w-[160px] rounded bg-white p-1 border border-stone/40" src={paymentQrUrl} alt={t('receipt.scanToPay')} />
+								<span class="text-caption font-semibold text-primary block mt-2">{t('receipt.scanToPay')}</span>
+							</div>
+							<p class="text-[10px] font-mono text-secondary break-all">{receipt.activePaymentUrl}</p>
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</div>

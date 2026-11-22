@@ -27,6 +27,7 @@
 		'shop_name',
 		'shop_phone',
 		'ticket_url',
+		'payment_url',
 		'approval_status'
 	];
 

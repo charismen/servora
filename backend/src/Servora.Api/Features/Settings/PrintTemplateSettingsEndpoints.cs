@@ -18,7 +18,8 @@ public static class PrintTemplateSettingsEndpoints
         bool ShowPhotoNotes,
         bool ShowQrCode,
         bool ShowPhoneNumber,
-        bool ShowPaymentSummary = true);
+        bool ShowPaymentSummary = true,
+        bool ShowPaymentQrCode = false);
 
     public sealed class Validator : AbstractValidator<Request>
     {
@@ -58,7 +59,8 @@ public static class PrintTemplateSettingsEndpoints
                 [PrintTemplateSettingKeys.ShowPhotoNotes] = request.ShowPhotoNotes.ToString().ToLowerInvariant(),
                 [PrintTemplateSettingKeys.ShowQrCode] = request.ShowQrCode.ToString().ToLowerInvariant(),
                 [PrintTemplateSettingKeys.ShowPhoneNumber] = request.ShowPhoneNumber.ToString().ToLowerInvariant(),
-                [PrintTemplateSettingKeys.ShowPaymentSummary] = request.ShowPaymentSummary.ToString().ToLowerInvariant()
+                [PrintTemplateSettingKeys.ShowPaymentSummary] = request.ShowPaymentSummary.ToString().ToLowerInvariant(),
+                [PrintTemplateSettingKeys.ShowPaymentQrCode] = request.ShowPaymentQrCode.ToString().ToLowerInvariant()
             };
 
             var existingSettings = await context.AppSettings
@@ -115,6 +117,7 @@ public static class PrintTemplateSettingsEndpoints
             BoolValue(PrintTemplateSettingKeys.ShowPhotoNotes),
             BoolValue(PrintTemplateSettingKeys.ShowQrCode),
             BoolValue(PrintTemplateSettingKeys.ShowPhoneNumber),
-            BoolValue(PrintTemplateSettingKeys.ShowPaymentSummary));
+            BoolValue(PrintTemplateSettingKeys.ShowPaymentSummary),
+            BoolValue(PrintTemplateSettingKeys.ShowPaymentQrCode));
     }
 }

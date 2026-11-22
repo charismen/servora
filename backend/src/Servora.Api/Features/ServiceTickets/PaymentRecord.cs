@@ -18,8 +18,8 @@ public class PaymentRecord
     public string? Method { get; set; }
     public string? ReferenceNumber { get; set; }
     public string? Notes { get; set; }
-    public int UpdatedByUserId { get; set; }
-    public ApplicationUser UpdatedByUser { get; set; } = null!;
+    public int? UpdatedByUserId { get; set; }
+    public ApplicationUser? UpdatedByUser { get; set; }
     public DateTimeOffset RecordedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public bool IsVoided { get; set; }
@@ -63,7 +63,7 @@ public class PaymentRecordConfiguration : IEntityTypeConfiguration<PaymentRecord
         builder.HasOne(record => record.UpdatedByUser)
             .WithMany()
             .HasForeignKey(record => record.UpdatedByUserId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.SetNull);
         builder.HasOne(record => record.VoidedByUser)
             .WithMany()
             .HasForeignKey(record => record.VoidedByUserId)

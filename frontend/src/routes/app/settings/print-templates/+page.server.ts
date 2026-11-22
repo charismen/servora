@@ -26,7 +26,8 @@ export const actions: Actions = {
 			showPhotoNotes: form.get('showPhotoNotes') === 'on',
 			showQrCode: form.get('showQrCode') === 'on',
 			showPhoneNumber: form.get('showPhoneNumber') === 'on',
-			showPaymentSummary: form.get('showPaymentSummary') === 'on'
+			showPaymentSummary: form.get('showPaymentSummary') === 'on',
+			showPaymentQrCode: form.get('showPaymentQrCode') === 'on'
 		};
 
 		try {

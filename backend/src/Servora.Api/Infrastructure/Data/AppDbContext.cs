@@ -12,6 +12,7 @@ using Servora.Api.Features.Shops;
 using Servora.Api.Features.Organizations;
 using Servora.Api.Features.Blueprints;
 using Servora.Api.Features.Maintenance;
+using Servora.Api.Features.Payments;
 using Servora.Api.Features.Attendance;
 using Servora.Api.Features.Payroll;
 using Servora.Api.Features.Assets;
@@ -74,6 +75,9 @@ public class AppDbContext : IdentityDbContext<
     public DbSet<StatusTransitionRule> StatusTransitionRules => Set<StatusTransitionRule>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
     public DbSet<PaymentRecord> PaymentRecords => Set<PaymentRecord>();
+    public DbSet<WorkspacePaymentGateway> WorkspacePaymentGateways => Set<WorkspacePaymentGateway>();
+    public DbSet<PaymentCheckoutIntent> PaymentCheckoutIntents => Set<PaymentCheckoutIntent>();
+    public DbSet<PaymentWebhookEvent> PaymentWebhookEvents => Set<PaymentWebhookEvent>();
     public DbSet<ServiceTicketWorkItem> ServiceTicketWorkItems => Set<ServiceTicketWorkItem>();
     public DbSet<MaintenanceSchedule> MaintenanceSchedules => Set<MaintenanceSchedule>();
     public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { createTranslator, formatDate, resolveTerminology } from '$lib/i18n';
+	import { createTranslator, formatCurrency, formatDate, resolveTerminology } from '$lib/i18n';
 	import { apiAssetUrl } from '$lib/media';
 	import { formatEnhanceUnexpectedError } from '$lib/utils/http';
 	import type { ActionData, PageData } from './$types';
@@ -13,8 +13,37 @@
 	let verifying = $state(false);
 	let verifyError = $state('');
 	let phoneLastFour = $state('');
+	let startingCheckout = $state(false);
+	let checkoutError = $state('');
 	const unlockedAttachments = $derived(form?.attachments ?? tracking?.attachments ?? []);
+	const verifiedPhone = $derived(form?.verifiedPhoneLastFour ?? '');
 	const isUnlocked = $derived(Boolean(form?.verified) || unlockedAttachments.length > 0);
+	const hasPublicPhotos = $derived((tracking?.publicPhotoCount ?? 0) > 0 || unlockedAttachments.length > 0);
+	const onlinePaymentEnabled = $derived(Boolean(tracking?.onlinePaymentEnabled));
+	const paymentRequiresPhone = $derived(Boolean(tracking?.paymentRequiresPhoneVerification ?? true));
+	const unlockedPaymentSummary = $derived(
+		form?.paymentSummary ??
+			(onlinePaymentEnabled && !paymentRequiresPhone
+				? {
+						onlinePaymentEnabled: true,
+						requiresPhoneVerification: false,
+						paymentStatus: tracking?.paymentStatus ?? 'Unpaid',
+						totalAmount: tracking?.totalAmount ?? null,
+						amountPaid: tracking?.amountPaid ?? 0,
+						remainingBalance: tracking?.remainingBalance ?? 0,
+						currencyCode: tracking?.currencyCode ?? 'IDR',
+						activePaymentUrl: tracking?.activePaymentUrl ?? null,
+						activePaymentExpiresAt: tracking?.activePaymentExpiresAt ?? null
+					}
+				: null)
+	);
+	const isPaymentUnlocked = $derived(Boolean(unlockedPaymentSummary));
+
+	$effect(() => {
+		if (form?.checkoutUrl && typeof window !== 'undefined') {
+			window.location.assign(form.checkoutUrl);
+		}
+	});
 
 	// Lightbox state
 	let activePhotoIndex = $state<number | null>(null);
@@ -217,6 +246,165 @@
 				</div>
 			</section>
 
+			<!-- Payment Return Banner -->
+			{#if data.paymentReturn === 'success'}
+				<div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-body-sm text-emerald-800 flex items-center gap-2.5 shadow-2xs">
+					<svg class="w-5 h-5 shrink-0 text-emerald-600" viewBox="0 0 20 20" fill="currentColor">
+						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
+					</svg>
+					<span>{t('tracking.payment.returnSuccess')}</span>
+				</div>
+			{:else if data.paymentReturn === 'cancelled'}
+				<div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-body-sm text-amber-900 flex items-center gap-2.5 shadow-2xs">
+					<svg class="w-5 h-5 shrink-0 text-amber-600" viewBox="0 0 20 20" fill="currentColor">
+						<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+					</svg>
+					<span>{t('tracking.payment.returnCancelled')}</span>
+				</div>
+			{/if}
+
+			<!-- Online Payment Section -->
+			{#if onlinePaymentEnabled}
+				<section class="bg-white border border-stone rounded-xl p-5 sm:p-8 shadow-2xs space-y-4 sm:space-y-5">
+					<div class="flex flex-wrap items-center justify-between gap-2.5 border-b border-stone/70 pb-3.5">
+						<div class="min-w-0 flex-1">
+							<h2 class="m-0 font-subheading text-base sm:text-subheading font-bold text-primary leading-snug">{t('tracking.payment.title')}</h2>
+							<p class="m-0 text-caption text-secondary mt-0.5">{t('tracking.payment.subtitle')}</p>
+						</div>
+						{#if tracking.paymentStatus}
+							<span class="px-2.5 py-1 rounded-full bg-ash border border-stone text-caption font-semibold text-primary leading-none">
+								{t(`tickets.paymentStatus.${unlockedPaymentSummary?.paymentStatus ?? tracking.paymentStatus}`)}
+							</span>
+						{/if}
+					</div>
+
+					{#if !isPaymentUnlocked}
+						<div class="rounded-lg border border-stone bg-ash/30 p-4 sm:p-6 space-y-4">
+							<p class="m-0 text-body-sm text-secondary">{t('tracking.payment.lockedDescription')}</p>
+
+							{#if verifyError || form?.errorKey}
+								<div class="rounded-lg border border-error/30 bg-error/10 px-3.5 py-2 text-body-sm text-error">
+									{verifyError || (form?.errorKey ? t(form.errorKey) : '')}
+								</div>
+							{/if}
+
+							<form
+								method="POST"
+								action="?/verifyPhotos"
+								class="flex flex-col sm:flex-row items-stretch sm:items-end gap-3"
+								use:enhance={() => {
+									verifying = true;
+									verifyError = '';
+									return async ({ result, update }) => {
+										try {
+											if (result.type === 'error') {
+												verifyError = formatEnhanceUnexpectedError(result.error, t);
+												return;
+											}
+											await update({ reset: false });
+										} finally {
+											verifying = false;
+										}
+									};
+								}}
+							>
+								<input type="hidden" name="includePayment" value="true" />
+								<input type="hidden" name="includePhotos" value={hasPublicPhotos ? 'true' : 'false'} />
+								<label class="space-y-1.5 flex-1">
+									<span class="block text-caption font-semibold uppercase text-secondary">{t('tracking.phoneLastFourLabel')}</span>
+									<input
+										name="phoneLastFour"
+										type="text"
+										inputmode="numeric"
+										maxlength="4"
+										bind:value={phoneLastFour}
+										oninput={(e) => {
+											phoneLastFour = e.currentTarget.value.replace(/\D/g, '').slice(0, 4);
+										}}
+										placeholder={t('tracking.phoneLastFourPlaceholder')}
+										class="w-full rounded-input border border-stone bg-white px-4 py-2.5 font-mono text-center text-lg tracking-[0.25em] text-primary focus:border-ink focus:ring-1 focus:ring-ink/10 focus:outline-none transition-colors"
+										required
+									/>
+								</label>
+								<button
+									type="submit"
+									disabled={verifying || phoneLastFour.replace(/\D/g, '').length !== 4}
+									class="px-button-x py-2.5 rounded-button bg-ink text-white font-medium hover:bg-ink/90 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-xs inline-flex items-center justify-center gap-2 cursor-pointer h-[42px]"
+								>
+									<span>{verifying ? t('tracking.payment.unlocking') : t('tracking.payment.unlockButton')}</span>
+								</button>
+							</form>
+						</div>
+					{:else if unlockedPaymentSummary}
+						<div class="rounded-lg border border-stone/80 bg-ash/30 p-4 space-y-2 text-body-sm">
+							<div class="flex justify-between gap-4 text-secondary">
+								<span>{t('tracking.payment.totalBill')}</span>
+								<span class="font-mono font-semibold text-primary tabular-nums">
+									{unlockedPaymentSummary.totalAmount != null
+										? formatCurrency(unlockedPaymentSummary.totalAmount, data.locale, unlockedPaymentSummary.currencyCode)
+										: '—'}
+								</span>
+							</div>
+							<div class="flex justify-between gap-4 text-secondary">
+								<span>{t('tracking.payment.amountPaid')}</span>
+								<span class="font-mono font-semibold text-primary tabular-nums">
+									{formatCurrency(unlockedPaymentSummary.amountPaid, data.locale, unlockedPaymentSummary.currencyCode)}
+								</span>
+							</div>
+							<div class="flex justify-between gap-4 pt-2 border-t border-stone/70 font-bold text-primary">
+								<span>{t('tracking.payment.remainingBalance')}</span>
+								<span class="font-mono tabular-nums text-claytile">
+									{formatCurrency(unlockedPaymentSummary.remainingBalance, data.locale, unlockedPaymentSummary.currencyCode)}
+								</span>
+							</div>
+						</div>
+
+						{#if checkoutError || form?.paymentErrorMessage || form?.paymentErrorKey}
+							<div class="rounded-lg border border-error/30 bg-error/10 px-3.5 py-2 text-body-sm text-error">
+								{checkoutError || form?.paymentErrorMessage || (form?.paymentErrorKey ? t(form.paymentErrorKey) : '')}
+							</div>
+						{/if}
+
+						{#if unlockedPaymentSummary.paymentStatus === 'Paid'}
+							<p class="m-0 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-body-sm font-medium text-emerald-800">
+								{t('tracking.payment.paidComplete')}
+							</p>
+						{:else if unlockedPaymentSummary.remainingBalance <= 0}
+							<p class="m-0 text-body-sm text-secondary">{t('tracking.payment.noBalanceDue')}</p>
+						{:else}
+							<form
+								method="POST"
+								action="?/startCheckout"
+								use:enhance={() => {
+									startingCheckout = true;
+									checkoutError = '';
+									return async ({ result, update }) => {
+										try {
+											if (result.type === 'error') {
+												checkoutError = formatEnhanceUnexpectedError(result.error, t);
+												return;
+											}
+											await update({ reset: false });
+										} finally {
+											startingCheckout = false;
+										}
+									};
+								}}
+							>
+								<input type="hidden" name="phoneLastFour" value={verifiedPhone || phoneLastFour} />
+								<button
+									type="submit"
+									disabled={startingCheckout}
+									class="w-full h-11 rounded-button bg-claytile text-white font-semibold hover:opacity-95 active:scale-[0.99] transition-all shadow-xs cursor-pointer inline-flex items-center justify-center gap-2 disabled:opacity-60"
+								>
+									<span>{startingCheckout ? t('tracking.payment.redirecting') : `${t('tracking.payment.payNow')} · ${formatCurrency(unlockedPaymentSummary.remainingBalance, data.locale, unlockedPaymentSummary.currencyCode)}`}</span>
+								</button>
+							</form>
+						{/if}
+					{/if}
+				</section>
+			{/if}
+
 			<!-- Photo Evidence Gallery Section -->
 			{#if (tracking.publicPhotoCount ?? 0) > 0 || unlockedAttachments.length > 0}
 				<section class="bg-white border border-stone rounded-xl p-5 sm:p-8 shadow-2xs space-y-4 sm:space-y-5">
@@ -285,6 +473,8 @@
 									};
 								}}
 							>
+								<input type="hidden" name="includePayment" value={onlinePaymentEnabled ? 'true' : 'false'} />
+								<input type="hidden" name="includePhotos" value="true" />
 								<label class="space-y-1.5 flex-1">
 									<span class="block text-caption font-semibold uppercase text-secondary">{t('tracking.phoneLastFourLabel')}</span>
 									<input

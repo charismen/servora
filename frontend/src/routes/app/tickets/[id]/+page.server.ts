@@ -7,6 +7,7 @@ import type { InventoryItem, TicketInventoryUsage } from '$lib/types/inventory';
 import type { Device } from '$lib/types/devices';
 import type { CustomerLocation } from '$lib/types/maintenance';
 import type { GeneratedWhatsAppMessage, TicketApproval, TicketDetail, TicketHistory, TicketPayment, TicketWorkItem, WorkItemType } from '$lib/types/service-tickets';
+import type { TicketPaymentLinksResponse } from '$lib/types/payments';
 import type { ServiceTemplate, TicketChecklistItem } from '$lib/types/service-templates';
 import type { StaffUser } from '$lib/types/shop-users';
 
@@ -14,12 +15,24 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 	const token = cookies.get('servora_session');
 	const id = Number(params.id);
 
-	const [ticket, history, approvals, workItems, payment, inventoryItems, inventoryUsages, staff, serviceTemplates, checklistItems, locations, allAssets] = await Promise.all([
+	const [ticket, history, approvals, workItems, payment, paymentLinks, inventoryItems, inventoryUsages, staff, serviceTemplates, checklistItems, locations, allAssets] = await Promise.all([
 		serverApiRequest<TicketDetail>(fetch, `/service-tickets/${id}`, { token }),
 		serverApiRequest<TicketHistory[]>(fetch, `/service-tickets/${id}/history`, { token }),
 		serverApiRequest<TicketApproval[]>(fetch, `/service-tickets/${id}/approvals`, { token }),
 		serverApiRequest<TicketWorkItem[]>(fetch, `/service-tickets/${id}/work-items`, { token }).catch(() => []),
 		serverApiRequest<TicketPayment>(fetch, `/service-tickets/${id}/payment`, { token }),
+		serverApiRequest<TicketPaymentLinksResponse>(fetch, `/service-tickets/${id}/payment-links`, { token }).catch(
+			() =>
+				({
+					gatewayEnabled: false,
+					provider: null,
+					environment: null,
+					workspaceEligible: false,
+					workspaceEligibilityReason: null,
+					defaultLinkExpiryHours: 24,
+					links: []
+				}) as TicketPaymentLinksResponse
+		),
 		serverApiRequest<InventoryItem[]>(fetch, '/inventory/items', { token }).catch(() => []),
 		serverApiRequest<TicketInventoryUsage[]>(fetch, `/service-tickets/${id}/inventory`, { token }).catch(() => []),
 		serverApiRequest<StaffUser[]>(fetch, '/shop-users/staff', { token }).catch(() => []),
@@ -35,6 +48,7 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 		approvals,
 		workItems,
 		payment,
+		paymentLinks,
 		inventoryItems,
 		inventoryUsages,
 		staff,
@@ -529,6 +543,43 @@ export const actions: Actions = {
 			if (error instanceof ServerApiError) return fail(error.status, { success: false, message: error.message });
 			throw error;
 		}
+	},
+	createPaymentLink: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const amount = parseOptionalAmount(form.get('amount'));
+		const description = nullable(form.get('description'));
+		return submitJson(
+			fetch,
+			cookies.get('servora_session'),
+			`/service-tickets/${params.id}/payment-links`,
+			'POST',
+			{ amount, expiresInHours: null, description },
+			{ ok: true, action: 'paymentLinkCreate', messageKey: 'tickets.paymentLinks.createdSuccess' }
+		);
+	},
+	syncPaymentLink: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const intentId = Number(form.get('intentId') ?? 0);
+		return submitJson(
+			fetch,
+			cookies.get('servora_session'),
+			`/service-tickets/${params.id}/payment-links/${intentId}/sync`,
+			'POST',
+			{},
+			{ ok: true, action: 'paymentLinkSync', messageKey: 'tickets.paymentLinks.syncedSuccess' }
+		);
+	},
+	cancelPaymentLink: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const intentId = Number(form.get('intentId') ?? 0);
+		return submitJson(
+			fetch,
+			cookies.get('servora_session'),
+			`/service-tickets/${params.id}/payment-links/${intentId}/cancel`,
+			'POST',
+			{},
+			{ ok: true, action: 'paymentLinkCancel', messageKey: 'tickets.paymentLinks.cancelledSuccess' }
+		);
 	}
 };
 

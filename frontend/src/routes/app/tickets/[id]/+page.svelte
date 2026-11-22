@@ -201,6 +201,28 @@
 	const workItems = $derived(data.workItems ?? []);
 	const paymentSummary = $derived(data.payment);
 	const paymentTransactions = $derived(data.payment.transactions ?? []);
+	const paymentLinksData = $derived(data.paymentLinks);
+	const paymentLinksList = $derived(paymentLinksData?.links ?? []);
+	const activePendingLink = $derived(
+		paymentLinksList.find((item) => item.status === 'Pending' && new Date(item.expiresAt).getTime() > Date.now()) ?? null
+	);
+	const pastPaymentLinks = $derived(
+		paymentLinksList.filter((item) => !activePendingLink || item.id !== activePendingLink.id)
+	);
+	let paymentLinkAmount = $state('');
+	let showPastPaymentLinks = $state(false);
+	let showPaymentQrModal = $state(false);
+	const activePaymentQrUrl = $derived(
+		activePendingLink?.paymentUrl
+			? `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(activePendingLink.paymentUrl)}`
+			: ''
+	);
+
+	async function copyPaymentLinkUrl(url: string) {
+		if (!url || !navigator.clipboard) return;
+		await navigator.clipboard.writeText(url);
+		toast.success(t('tickets.paymentLinks.copied'));
+	}
 	const formResult = $derived((form as ({ action?: string; message?: string; messageKey?: string; ok?: boolean; success?: boolean; variant?: 'success' | 'error' | 'warning' | 'info' } & Record<string, unknown>) | undefined));
 	const formAction = $derived(formResult?.action);
 
@@ -341,6 +363,9 @@
 	const isRecalculatingBilling = $derived(pendingAction === 'recalculateBilling');
 	const isRecordingTransaction = $derived(pendingAction === 'recordPaymentTransaction');
 	const isSavingBilling = $derived(pendingAction === 'updateBilling');
+	const isCreatingPaymentLink = $derived(pendingAction === 'createPaymentLink');
+	const isSyncingPaymentLink = $derived(pendingAction === 'syncPaymentLink');
+	const isCancellingPaymentLink = $derived(pendingAction === 'cancelPaymentLink');
 	const liveFormulaTotal = $derived(
 		Math.max(0, approvedWorkItemsSubtotal + consumedPartsSubtotal - Math.max(0, Number(billingDraft.discountAmount || 0)))
 	);
@@ -632,6 +657,9 @@
 		}
 		if (formAction === 'billing') {
 			billingDraft = makeBillingDraft(data.payment);
+		}
+		if (formAction === 'paymentLinkCreate') {
+			paymentLinkAmount = '';
 		}
 		if (formAction === 'pickupOverride') pickupOverrideReason = '';
 		if (formAction === 'inventory') reserveDraft = { inventoryItemId: '', quantity: '', notes: '' };
@@ -2498,6 +2526,159 @@
 					{/if}
 				</div>
 
+				<!-- Online Payment Links (Optional Gateway) -->
+				{#if paymentLinksData?.gatewayEnabled && paymentSummary.status !== 'Waived'}
+					<div class="border-t border-stone/70 pt-3.5 space-y-3">
+						<div class="flex items-center justify-between gap-2">
+							<span class="text-body-sm font-semibold text-primary">{t('tickets.paymentLinks.title')}</span>
+							<span class="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-ash border border-stone text-secondary">
+								{paymentLinksData.provider} · {paymentLinksData.environment}
+							</span>
+						</div>
+
+						{#if activePendingLink && activePendingLink.paymentUrl}
+							<div class="rounded-lg border border-claytile/40 bg-tertiary-container/25 p-3 space-y-2.5 text-caption">
+								<div class="flex items-center justify-between gap-2">
+									<span class="font-semibold text-primary flex items-center gap-1.5">
+										<span class="w-2 h-2 rounded-full bg-claytile"></span>
+										<span>{t('tickets.paymentLinks.activePending')}</span>
+									</span>
+									<span class="font-mono font-bold tabular-nums text-primary">
+										{formatCurrency(activePendingLink.amount, data.locale, activePendingLink.currencyCode)}
+									</span>
+								</div>
+								<p class="text-[11px] text-secondary m-0">
+									{t('tickets.paymentLinks.expiresAt')}: {formatDate(activePendingLink.expiresAt, data.locale, { dateStyle: 'medium', timeStyle: 'short' })}
+								</p>
+								<div class="flex flex-wrap gap-1.5 pt-0.5">
+									<button
+										type="button"
+										onclick={() => copyPaymentLinkUrl(activePendingLink.paymentUrl ?? '')}
+										class="px-2.5 py-1 rounded border border-stone bg-white hover:bg-ash text-[11px] font-semibold text-primary cursor-pointer inline-flex items-center gap-1"
+									>
+										<span class="material-symbols-outlined text-[14px]">content_copy</span>
+										<span>{t('tickets.paymentLinks.copyLink')}</span>
+									</button>
+									<button
+										type="button"
+										onclick={() => (showPaymentQrModal = true)}
+										class="px-2.5 py-1 rounded border border-stone bg-white hover:bg-ash text-[11px] font-semibold text-primary cursor-pointer inline-flex items-center gap-1"
+									>
+										<span class="material-symbols-outlined text-[14px]">qr_code_2</span>
+										<span>{t('tickets.paymentLinks.showQr')}</span>
+									</button>
+									<a
+										href={activePendingLink.paymentUrl}
+										target="_blank"
+										rel="noopener noreferrer"
+										class="px-2.5 py-1 rounded border border-stone bg-white hover:bg-ash text-[11px] font-semibold text-primary inline-flex items-center gap-1"
+									>
+										<span class="material-symbols-outlined text-[14px]">open_in_new</span>
+										<span>{t('tickets.paymentLinks.openLink')}</span>
+									</a>
+									<form method="POST" action="?/syncPaymentLink" class="inline" use:enhance={enhanceAction('syncPaymentLink')}>
+										<input type="hidden" name="intentId" value={activePendingLink.id} />
+										<button
+											type="submit"
+											disabled={isSyncingPaymentLink}
+											class="px-2.5 py-1 rounded border border-stone bg-white hover:bg-ash text-[11px] font-semibold text-primary cursor-pointer inline-flex items-center gap-1 disabled:opacity-60"
+										>
+											<span class="material-symbols-outlined text-[14px]">sync</span>
+											<span>{isSyncingPaymentLink ? t('tickets.paymentLinks.syncing') : t('tickets.paymentLinks.syncStatus')}</span>
+										</button>
+									</form>
+									<form method="POST" action="?/cancelPaymentLink" class="inline" use:enhance={enhanceAction('cancelPaymentLink')}>
+										<input type="hidden" name="intentId" value={activePendingLink.id} />
+										<button
+											type="submit"
+											disabled={isCancellingPaymentLink}
+											class="px-2.5 py-1 rounded border border-rose-200 bg-white hover:bg-rose-50 text-[11px] font-semibold text-rose-700 cursor-pointer inline-flex items-center gap-1 disabled:opacity-60"
+										>
+											<span>{isCancellingPaymentLink ? t('tickets.paymentLinks.cancelling') : t('tickets.paymentLinks.cancelLink')}</span>
+										</button>
+									</form>
+								</div>
+							</div>
+						{/if}
+
+						{#if remainingBalance > 0 || paymentSummary.totalAmount == null}
+							<form method="POST" action="?/createPaymentLink" class="space-y-2" use:enhance={enhanceAction('createPaymentLink')}>
+								<div class="flex flex-wrap items-baseline justify-between gap-2">
+									<span class="text-label-caps font-label-caps text-secondary uppercase">{t('tickets.paymentLinks.amountLabel')}</span>
+									{#if remainingBalance > 0}
+										<button
+											type="button"
+											class="text-[11px] font-semibold text-claytile hover:text-ink underline underline-offset-2 cursor-pointer tabular-nums"
+											onclick={() => (paymentLinkAmount = String(remainingBalance))}
+										>
+											{t('tickets.paymentLedger.fillBalance')} ({formatCurrency(remainingBalance, data.locale, currencyCode)})
+										</button>
+									{/if}
+								</div>
+								<CurrencyInput
+									name="amount"
+									prefix={currencySymbol}
+									locale={data.locale}
+									currency={currencyCode}
+									allowDecimals={allowCurrencyDecimals}
+									inputClass="h-[38px] px-3 py-2 text-body-sm font-mono tabular-nums"
+									placeholder={remainingBalance > 0 ? String(remainingBalance) : '0'}
+									bind:value={paymentLinkAmount}
+								/>
+								<p class="text-[11px] text-secondary m-0">{t('tickets.paymentLinks.amountHint')}</p>
+								<button
+									type="submit"
+									disabled={isCreatingPaymentLink}
+									class="w-full px-button-x py-button-y rounded-button border border-ink bg-white text-ink hover:bg-ink hover:text-white transition-colors text-body-sm font-medium cursor-pointer inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
+								>
+									<span class="material-symbols-outlined text-[16px]">link</span>
+									<span>{isCreatingPaymentLink ? t('tickets.paymentLinks.creating') : t('tickets.paymentLinks.createButton')}</span>
+								</button>
+							</form>
+						{/if}
+
+						{#if pastPaymentLinks.length > 0}
+							<div class="pt-1">
+								<button
+									type="button"
+									class="w-full flex items-center justify-between text-caption font-semibold text-secondary hover:text-primary cursor-pointer py-0.5"
+									onclick={() => (showPastPaymentLinks = !showPastPaymentLinks)}
+								>
+									<span>{t('tickets.paymentLinks.pastLinks')} ({pastPaymentLinks.length})</span>
+									<span class="material-symbols-outlined text-[16px] transition-transform {showPastPaymentLinks ? 'rotate-180' : ''}">expand_more</span>
+								</button>
+								{#if showPastPaymentLinks}
+									<div class="mt-2 space-y-1.5 max-h-48 overflow-y-auto pr-1">
+										{#each pastPaymentLinks as link (link.id)}
+											<div class="rounded border border-stone/80 bg-ash/20 px-2.5 py-2 text-[11px] space-y-0.5">
+												<div class="flex items-center justify-between gap-2">
+													<span class="font-semibold text-primary">
+														{labelFor('tickets.paymentLinks.status', link.status)} · {link.provider}
+													</span>
+													<span class="font-mono font-semibold tabular-nums text-primary">
+														{formatCurrency(link.amount, data.locale, link.currencyCode)}
+													</span>
+												</div>
+												<div class="flex items-center justify-between gap-2 text-secondary">
+													<span class="font-mono truncate">{link.providerPaymentMethod || link.externalReference}</span>
+													<span class="shrink-0 tabular-nums">{formatDate(link.paidAt || link.createdAt, data.locale, { dateStyle: 'short', timeStyle: 'short' })}</span>
+												</div>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				{:else if paymentLinksData?.workspaceEligible && !paymentLinksData?.gatewayEnabled}
+					<div class="border-t border-stone/70 pt-3 flex items-center justify-between gap-2 text-caption text-secondary">
+						<span>{t('tickets.paymentLinks.configurePrompt')}</span>
+						<a href="/app/settings/payment-gateway" class="font-semibold text-claytile hover:text-ink underline underline-offset-2 shrink-0">
+							{t('tickets.paymentLinks.configureLink')}
+						</a>
+					</div>
+				{/if}
+
 				<!-- Record Payment / Refund Form -->
 				<form method="POST" action="?/recordPaymentTransaction" class="space-y-3 border-t border-stone/70 pt-3.5" use:enhance={enhanceAction('recordPaymentTransaction')}>
 					<input type="hidden" name="entryType" value={txDraft.entryType} />
@@ -2738,7 +2919,7 @@
 									</div>
 									<div class="flex items-baseline justify-between gap-2 text-[11px] text-secondary">
 										<span class="truncate font-medium">
-											{[tx.method, tx.referenceNumber].filter(Boolean).join(' · ') || tx.updatedByName || '-'}
+											{[tx.method, tx.referenceNumber].filter(Boolean).join(' · ') || tx.updatedByName || t('tickets.paymentLedger.onlinePaymentActor')}
 										</span>
 										<span class="shrink-0 tabular-nums">{formatDate(tx.recordedAt, data.locale, { dateStyle: 'medium', timeStyle: 'short' })}</span>
 									</div>
@@ -2749,7 +2930,7 @@
 										<p class="text-[11px] text-rose-700 mb-0">{t('tickets.paymentLedger.voidReason')}: {tx.voidReason}</p>
 									{:else if !tx.isVoided && tx.entryType !== 'BillingUpdate'}
 										<div class="flex items-center justify-between gap-2 pt-1 border-t border-stone/50">
-											<span class="text-[11px] text-secondary truncate">{tx.updatedByName ?? ''}</span>
+											<span class="text-[11px] text-secondary truncate">{tx.updatedByName || t('tickets.paymentLedger.onlinePaymentActor')}</span>
 											<button
 												type="button"
 												class="px-2 py-0.5 rounded border border-rose-200 bg-white hover:bg-rose-50 text-[11px] font-semibold text-rose-700 cursor-pointer shrink-0 transition-colors"
@@ -2944,6 +3125,67 @@
 		</form>
 	{/if}
 </dialog>
+
+{#if showPaymentQrModal && activePendingLink && activePendingLink.paymentUrl}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 z-50 bg-ink/60 backdrop-blur-xs flex items-center justify-center p-4"
+		onclick={() => (showPaymentQrModal = false)}
+	>
+		<div
+			class="w-full max-w-sm rounded-xl border border-stone bg-white p-6 shadow-xl text-center space-y-4"
+			onclick={(e) => e.stopPropagation()}
+		>
+			<div class="flex items-start justify-between gap-2 text-left">
+				<div>
+					<h3 class="text-subheading font-bold text-primary m-0">{t('tickets.paymentLinks.qrModalTitle')}</h3>
+					<p class="text-caption text-secondary mt-0.5 m-0">{t('tickets.paymentLinks.qrModalSubtitle')}</p>
+				</div>
+				<button
+					type="button"
+					class="w-8 h-8 rounded-lg hover:bg-ash text-secondary hover:text-primary flex items-center justify-center cursor-pointer"
+					onclick={() => (showPaymentQrModal = false)}
+					aria-label={t('common.close')}
+				>
+					✕
+				</button>
+			</div>
+
+			<div class="rounded-xl border border-stone bg-ash/30 p-4 flex flex-col items-center space-y-2">
+				<img
+					src={activePaymentQrUrl}
+					alt={t('tickets.paymentLinks.qrModalTitle')}
+					class="w-56 h-56 rounded-lg border border-stone bg-white p-2"
+				/>
+				<div class="font-mono font-bold text-body text-primary">
+					{formatCurrency(activePendingLink.amount, data.locale, activePendingLink.currencyCode)}
+				</div>
+				<p class="text-[11px] font-mono text-secondary break-all m-0">{activePendingLink.paymentUrl}</p>
+			</div>
+
+			<div class="flex items-center justify-center gap-2">
+				<button
+					type="button"
+					onclick={() => copyPaymentLinkUrl(activePendingLink.paymentUrl ?? '')}
+					class="h-9 px-3.5 rounded-button border border-stone bg-white hover:bg-ash text-caption font-semibold text-primary cursor-pointer inline-flex items-center gap-1.5"
+				>
+					<span class="material-symbols-outlined text-[16px]">content_copy</span>
+					<span>{t('tickets.paymentLinks.copyLink')}</span>
+				</button>
+				<a
+					href={activePendingLink.paymentUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="h-9 px-3.5 rounded-button bg-ink text-white hover:bg-ink/90 text-caption font-semibold inline-flex items-center gap-1.5"
+				>
+					<span class="material-symbols-outlined text-[16px]">open_in_new</span>
+					<span>{t('tickets.paymentLinks.openLink')}</span>
+				</a>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.ticket-input,

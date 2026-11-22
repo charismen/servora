@@ -7,6 +7,7 @@ using Servora.Api.Features.Blueprints;
 using Servora.Api.Features.Devices;
 using Servora.Api.Features.Identity.Permissions;
 using Servora.Api.Features.Inventory;
+using Servora.Api.Features.Payments;
 using Servora.Api.Features.Settings;
 using Servora.Api.Features.ServiceTemplates;
 using Servora.Api.Features.Shops;
@@ -244,7 +245,9 @@ public static class ServiceTicketEndpoints
         IReadOnlyCollection<BlueprintEndpoints.FieldValueDto>? PrintCustomFields = null,
         TerminologyConfigDto? Terminology = null,
         WorkspaceFeatureConfig? FeatureConfig = null,
-        IReadOnlyCollection<BlueprintEndpoints.TicketInspectionDto>? PrintInspections = null);
+        IReadOnlyCollection<BlueprintEndpoints.TicketInspectionDto>? PrintInspections = null,
+        bool ShowPaymentQrCode = false,
+        string? ActivePaymentUrl = null);
 
     public sealed record CreateTicketRequest(
         int CustomerId,
@@ -1366,6 +1369,23 @@ public static class ServiceTicketEndpoints
                 .ToListAsync(cancellationToken)
             : [];
 
+        var showPaymentQrCode = printSettings.ShowPaymentQrCode
+            && !ticket.IsInternalWorkOrder
+            && featureConfig.ShowBillingAndPayments;
+        string? activePaymentUrl = null;
+        if (showPaymentQrCode)
+        {
+            var now = DateTimeOffset.UtcNow;
+            activePaymentUrl = await context.PaymentCheckoutIntents.AsNoTracking()
+                .Where(x => x.ShopId == shopId
+                    && x.ServiceTicketId == ticket.Id
+                    && x.Status == PaymentCheckoutStatus.Pending
+                    && x.ExpiresAt > now)
+                .OrderByDescending(x => x.CreatedAt)
+                .Select(x => x.PaymentUrl)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
         return Results.Ok(new TicketReceiptDto(
             ticket.Id,
             ticket.TicketNumber,
@@ -1414,7 +1434,9 @@ public static class ServiceTicketEndpoints
             printFields,
             IndustryBlueprintCatalog.DeserializeTerminology(workspace.TerminologyConfig, workspace.IndustryBlueprintKey),
             featureConfig,
-            printInspections));
+            printInspections,
+            showPaymentQrCode && !string.IsNullOrWhiteSpace(activePaymentUrl),
+            activePaymentUrl));
     }
 
     private static async Task<IResult> LogReceiptPrintAsync(
@@ -2856,14 +2878,16 @@ public static class ServiceTicketEndpoints
             .Where(item => item.PublicTrackingEnabled && item.PublicTrackingToken == token && item.DeletedAt == null)
             .Select(item => new
             {
-                item.Id,
-                item.ShopId,
-                item.DeviceId,
+                Ticket = item,
+                Shop = item.Shop,
                 ShopName = item.Shop.Name,
                 ShopLogoUrl = item.Shop.LogoUrl,
                 item.Shop.IndustryBlueprintKey,
                 item.Shop.TerminologyConfig,
                 OperatingMode = item.Shop.OperatingMode.ToString(),
+                item.Id,
+                item.ShopId,
+                item.DeviceId,
                 item.TicketNumber,
                 item.DeviceSnapshot,
                 ServiceLocationType = item.ServiceLocationType.ToString(),
@@ -2871,6 +2895,7 @@ public static class ServiceTicketEndpoints
                 item.ScheduledVisitStart,
                 Status = item.Status.Name,
                 item.Status.Color,
+                item.Status.IsCancelled,
                 History = context.ServiceTicketHistories
                     .Where(history => history.ServiceTicketId == item.Id && history.IsPublicVisible)
                     .OrderBy(history => history.CreatedAt)
@@ -2904,6 +2929,53 @@ public static class ServiceTicketEndpoints
                 v.FieldDefinition.FieldType.ToString(), v.Value, v.FieldDefinition.ShowOnPrint, true))
             .ToListAsync(cancellationToken);
 
+        var (workspaceEligible, _) = PaymentCheckoutService.EvaluateWorkspaceEligibility(ticket.Shop);
+        var gatewayConfig = workspaceEligible
+            ? await context.WorkspacePaymentGateways.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.ShopId == ticket.ShopId, cancellationToken)
+            : null;
+
+        var onlinePaymentEnabled = workspaceEligible
+            && !ticket.Ticket.IsInternalWorkOrder
+            && !ticket.IsCancelled
+            && ticket.Ticket.PaymentStatus != PaymentStatus.Waived
+            && gatewayConfig is not null
+            && gatewayConfig.IsEnabled
+            && gatewayConfig.Provider != PaymentGatewayProvider.None
+            && gatewayConfig.EnablePublicTrackingPayment;
+
+        var paymentRequiresPhoneVerification = gatewayConfig?.RequirePhoneVerificationForPublicPayment ?? true;
+        string? paymentStatus = onlinePaymentEnabled ? ticket.Ticket.PaymentStatus.ToString() : null;
+        decimal? totalAmount = null;
+        decimal? amountPaid = null;
+        decimal? remainingBalance = null;
+        string? currencyCode = null;
+        string? activePaymentUrl = null;
+        DateTimeOffset? activePaymentExpiresAt = null;
+
+        if (onlinePaymentEnabled && !paymentRequiresPhoneVerification)
+        {
+            var billing = await TicketBillingService.GetBillingSnapshotAsync(context, ticket.ShopId, ticket.Ticket, cancellationToken);
+            paymentStatus = billing.PaymentStatus.ToString();
+            totalAmount = billing.TotalAmount;
+            amountPaid = billing.AmountPaid;
+            remainingBalance = billing.RemainingBalance;
+            currencyCode = ticket.Shop.CurrencyCode;
+
+            var now = DateTimeOffset.UtcNow;
+            var pendingIntent = await context.PaymentCheckoutIntents.AsNoTracking()
+                .Where(x => x.ShopId == ticket.ShopId
+                    && x.ServiceTicketId == ticket.Id
+                    && x.Status == PaymentCheckoutStatus.Pending
+                    && x.ExpiresAt > now)
+                .OrderByDescending(x => x.CreatedAt)
+                .Select(x => new { x.PaymentUrl, x.ExpiresAt })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            activePaymentUrl = pendingIntent?.PaymentUrl;
+            activePaymentExpiresAt = pendingIntent?.ExpiresAt;
+        }
+
         return Results.Ok(new
         {
             ticket.ShopName,
@@ -2920,7 +2992,16 @@ public static class ServiceTicketEndpoints
             ticket.History,
             PublicFields = publicAssetFields.Concat(publicTicketFields).ToList(),
             PublicPhotoCount = publicPhotoCount,
-            Attachments = Array.Empty<object>()
+            Attachments = Array.Empty<object>(),
+            OnlinePaymentEnabled = onlinePaymentEnabled,
+            PaymentRequiresPhoneVerification = paymentRequiresPhoneVerification,
+            PaymentStatus = paymentStatus,
+            TotalAmount = totalAmount,
+            AmountPaid = amountPaid,
+            RemainingBalance = remainingBalance,
+            CurrencyCode = currencyCode,
+            ActivePaymentUrl = activePaymentUrl,
+            ActivePaymentExpiresAt = activePaymentExpiresAt
         });
     }
 
@@ -3257,7 +3338,7 @@ public static class ServiceTicketEndpoints
                 item.Method,
                 item.ReferenceNumber,
                 item.Notes,
-                UpdatedByName = (item.UpdatedByUser.FirstName + " " + item.UpdatedByUser.LastName).Trim(),
+                UpdatedByName = item.UpdatedByUser == null ? null : (item.UpdatedByUser.FirstName + " " + item.UpdatedByUser.LastName).Trim(),
                 item.RecordedAt,
                 item.CreatedAt,
                 item.IsVoided,
