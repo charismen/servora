@@ -23,6 +23,10 @@ type PublicTracking = {
 	serviceLocationType?: string;
 	siteAddressSnapshot?: string | null;
 	scheduledVisitStart?: string | null;
+	scheduledVisitEnd?: string | null;
+	dispatchStatus?: string | null;
+	visitStartedAt?: string | null;
+	visitCompletedAt?: string | null;
 	status: string;
 	color: string;
 	publicPhotoCount: number;

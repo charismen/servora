@@ -5,6 +5,7 @@ using Servora.Api.Features.Activity;
 using Servora.Api.Features.Blueprints;
 using Servora.Api.Features.Customers;
 using Servora.Api.Features.Devices;
+using Servora.Api.Features.Dispatch;
 using Servora.Api.Features.Maintenance;
 using Servora.Api.Features.Payments;
 using Servora.Api.Features.Organizations;
@@ -210,6 +211,7 @@ builder.Services.AddScoped<IPaymentGateway, StripeGatewayAdapter>();
 builder.Services.AddScoped<IPaymentGatewayRegistry, PaymentGatewayRegistry>();
 builder.Services.AddScoped<PaymentCheckoutService>();
 builder.Services.AddScoped<PaymentIntentExpiryJob>();
+builder.Services.AddScoped<DispatchSchedulingService>();
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -340,6 +342,7 @@ DeviceEndpoints.MapEndpoint(versionedGroup);
 ServiceTicketEndpoints.MapEndpoint(versionedGroup);
 ServiceTemplateEndpoints.MapEndpoint(versionedGroup);
 MaintenanceScheduleEndpoints.MapEndpoint(versionedGroup);
+DispatchEndpoints.MapEndpoint(versionedGroup);
 NotificationTemplateEndpoints.MapEndpoint(versionedGroup);
 InventoryEndpoints.MapEndpoint(versionedGroup);
 InventoryImportEndpoints.MapEndpoint(versionedGroup);

@@ -701,6 +701,19 @@
 							{t('tickets.detail.warrantyActive')}
 						</span>
 					{/if}
+					{#if ticket.dispatchStatus && ticket.dispatchStatus !== 'Unscheduled'}
+						<a
+							href={ticket.scheduledVisitStart ? `/app/dispatch?view=day&date=${ticket.scheduledVisitStart.slice(0, 10)}` : '/app/dispatch'}
+							class="px-2.5 py-0.5 rounded-full bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100 text-caption font-semibold inline-flex items-center gap-1 transition-colors"
+							title={t('dispatch.viewOnBoard')}
+						>
+							<span class="material-symbols-outlined text-[14px]">calendar_month</span>
+							<span>{t(`dispatch.status.${ticket.dispatchStatus}`)}</span>
+							{#if ticket.serviceResourceName}
+								<span>· {ticket.serviceResourceName}</span>
+							{/if}
+						</a>
+					{/if}
 				</div>
 				<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-secondary pt-0.5">
 					<a href={`/app/customers/${ticket.customerId}`} class="font-semibold text-primary hover:underline inline-flex items-center gap-1">

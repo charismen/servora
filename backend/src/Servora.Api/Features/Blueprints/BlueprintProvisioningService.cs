@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Servora.Api.Features.Customers;
 using Servora.Api.Features.Devices;
+using Servora.Api.Features.Dispatch;
 using Servora.Api.Features.Maintenance;
 using Servora.Api.Features.Notifications;
 using Servora.Api.Features.ServiceStatuses;
@@ -187,6 +188,33 @@ public sealed class BlueprintProvisioningService
                 }
 
                 _context.ServiceTemplates.Add(entity);
+            }
+        }
+
+        // 5b. Starter Service Resources (e.g. Bays / Service Vans for Automotive & HVAC blueprints)
+        if (blueprint.Resources is { Count: > 0 })
+        {
+            var existingResourceNames = await _context.ServiceResources
+                .Where(r => r.ShopId == workspace.Id)
+                .Select(r => r.Name)
+                .ToListAsync(cancellationToken);
+
+            if (existingResourceNames.Count == 0)
+            {
+                var resourceOrder = 1;
+                foreach (var res in blueprint.Resources)
+                {
+                    _context.ServiceResources.Add(new ServiceResource
+                    {
+                        ShopId = workspace.Id,
+                        Name = res.Name,
+                        Code = res.Code,
+                        ResourceType = res.ResourceType,
+                        Color = res.Color,
+                        SortOrder = resourceOrder++,
+                        IsActive = true
+                    });
+                }
             }
         }
 

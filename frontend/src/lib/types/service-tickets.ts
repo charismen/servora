@@ -100,6 +100,12 @@ export interface TicketDetail {
 	customFields?: FieldValueDto[];
 	assetCustomFields?: FieldValueDto[];
 	inspections?: TicketInspectionDto[];
+	serviceResourceId?: number | null;
+	serviceResourceName?: string | null;
+	dispatchStatus?: string;
+	visitStartedAt?: string | null;
+	visitCompletedAt?: string | null;
+	dispatchNotes?: string | null;
 }
 
 export interface TicketAccessory {

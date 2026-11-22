@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Servora.Api.Features.Dispatch;
 using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Features.Shops;
 
@@ -82,6 +83,12 @@ public sealed record BlueprintTemplateSeed(
     int WarrantyDays,
     string[] ChecklistItems);
 
+public sealed record BlueprintResourceSeed(
+    string Name,
+    string Code,
+    ServiceResourceType ResourceType,
+    string Color = "#b45039");
+
 public sealed record IndustryBlueprintDefinition(
     string Key,
     string NameEn,
@@ -97,7 +104,8 @@ public sealed record IndustryBlueprintDefinition(
     IReadOnlyList<BlueprintStatusSeed> Statuses,
     IReadOnlyList<BlueprintFieldSeed> Fields,
     IReadOnlyList<BlueprintChecklistSeed> Checklists,
-    IReadOnlyList<BlueprintTemplateSeed> ServiceTemplates);
+    IReadOnlyList<BlueprintTemplateSeed> ServiceTemplates,
+    IReadOnlyList<BlueprintResourceSeed>? Resources = null);
 
 public static class IndustryBlueprintCatalog
 {
@@ -297,6 +305,11 @@ public static class IndustryBlueprintCatalog
             [
                 new("Periodic Tune-Up & Oil Service", "Preventive", "Engine oil & filter change, air filter check, brake inspection, and fluid top-up.", 350000, 90, 14, ["Drain & refill engine oil", "Replace oil filter", "Check tire pressure", "Reset service indicator"]),
                 new("Brake System Overhaul", "Safety", "Brake pad replacement, rotor check, caliper lubrication, and fluid bleed.", 450000, 120, 30, ["Measure pad thickness", "Inspect brake lines", "Replace pads & bleed fluid", "Road test braking"])
+            ],
+            Resources:
+            [
+                new("Bay 1", "BAY-1", ServiceResourceType.Bay, "#b45039"),
+                new("Bay 2", "BAY-2", ServiceResourceType.Bay, "#2563eb")
             ]),
 
         new IndustryBlueprintDefinition(
@@ -358,6 +371,11 @@ public static class IndustryBlueprintCatalog
             [
                 new("Standard AC Wash & Preventive Check", "Preventive", "High-pressure indoor/outdoor coil cleaning, drain flush, and operating amp check.", 125000, 60, 14, ["Wash evaporator & filter", "Flush drain pipe", "Wash outdoor condenser", "Measure outlet temp & amps"]),
                 new("Refrigerant Top-Up & Leak Test", "Repair", "Pressure test lines, seal minor flare leak, vacuum, and recharge refrigerant.", 325000, 90, 30, ["Inspect flare fittings", "Check manifold pressure", "Charge to spec", "Verify cooling delta-T"])
+            ],
+            Resources:
+            [
+                new("Service Van 1", "VAN-1", ServiceResourceType.Vehicle, "#0891b2"),
+                new("Service Van 2", "VAN-2", ServiceResourceType.Vehicle, "#059669")
             ]),
 
         new IndustryBlueprintDefinition(

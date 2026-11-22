@@ -136,7 +136,13 @@ public static class ServiceTicketEndpoints
         IReadOnlyCollection<LinkedAssetDto>? LinkedAssets = null,
         IReadOnlyCollection<BlueprintEndpoints.FieldValueDto>? CustomFields = null,
         IReadOnlyCollection<BlueprintEndpoints.FieldValueDto>? AssetCustomFields = null,
-        IReadOnlyCollection<BlueprintEndpoints.TicketInspectionDto>? Inspections = null);
+        IReadOnlyCollection<BlueprintEndpoints.TicketInspectionDto>? Inspections = null,
+        int? ServiceResourceId = null,
+        string? ServiceResourceName = null,
+        string DispatchStatus = "Unscheduled",
+        DateTimeOffset? VisitStartedAt = null,
+        DateTimeOffset? VisitCompletedAt = null,
+        string? DispatchNotes = null);
 
     public sealed record LinkedAssetDto(int ServiceAssetId, string Brand, string Model, string? PrimaryIdentifier, string? Notes);
 
@@ -1123,6 +1129,7 @@ public static class ServiceTicketEndpoints
                 StatusName = item.Status.Name,
                 StatusColor = item.Status.Color,
                 AssignedTechnician = item.AssignedTechnicianUser == null ? null : (item.AssignedTechnicianUser.FirstName + " " + item.AssignedTechnicianUser.LastName).Trim(),
+                ServiceResourceName = item.ServiceResource == null ? null : item.ServiceResource.Name,
                 HasPendingApproval = context.ApprovalRequests.Any(approval => approval.ShopId == shopId && approval.ServiceTicketId == item.Id && approval.Status == ApprovalStatus.Pending),
                 Accessories = context.ServiceTicketAccessories
                     .Where(accessory => accessory.ShopId == shopId && accessory.ServiceTicketId == item.Id)
@@ -1228,7 +1235,13 @@ public static class ServiceTicketEndpoints
             linkedAssets,
             ticketCustomFields,
             assetCustomFields,
-            inspections));
+            inspections,
+            ticket.Ticket.ServiceResourceId,
+            ticket.ServiceResourceName,
+            ticket.Ticket.DispatchStatus.ToString(),
+            ticket.Ticket.VisitStartedAt,
+            ticket.Ticket.VisitCompletedAt,
+            ticket.Ticket.DispatchNotes));
     }
 
     private static async Task<IResult> GetTicketByNumberAsync(string ticketNumber, AppDbContext context, IShopContext shopContext, CancellationToken cancellationToken)
@@ -2893,6 +2906,10 @@ public static class ServiceTicketEndpoints
                 ServiceLocationType = item.ServiceLocationType.ToString(),
                 item.SiteAddressSnapshot,
                 item.ScheduledVisitStart,
+                item.ScheduledVisitEnd,
+                DispatchStatus = item.DispatchStatus.ToString(),
+                item.VisitStartedAt,
+                item.VisitCompletedAt,
                 Status = item.Status.Name,
                 item.Status.Color,
                 item.Status.IsCancelled,
@@ -2987,6 +3004,10 @@ public static class ServiceTicketEndpoints
             ticket.ServiceLocationType,
             ticket.SiteAddressSnapshot,
             ticket.ScheduledVisitStart,
+            ticket.ScheduledVisitEnd,
+            ticket.DispatchStatus,
+            ticket.VisitStartedAt,
+            ticket.VisitCompletedAt,
             ticket.Status,
             ticket.Color,
             ticket.History,

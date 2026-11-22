@@ -210,6 +210,39 @@
 					</div>
 				{/if}
 
+				<!-- Live Visit Status Banner -->
+				{#if tracking.dispatchStatus && tracking.dispatchStatus !== 'Unscheduled'}
+					<div class="rounded-lg border border-sky-200 bg-sky-50/60 px-4 py-3 space-y-1.5 text-caption">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<span class="font-semibold text-sky-900 uppercase tracking-wider text-[11px]">{t('tracking.visit.title')}</span>
+							<span class="px-2.5 py-0.5 rounded-full bg-white border border-sky-200 text-sky-900 font-semibold">
+								{t(`dispatch.status.${tracking.dispatchStatus}`)}
+							</span>
+						</div>
+						{#if tracking.scheduledVisitStart}
+							<p class="m-0 text-sky-900/80">
+								<span class="font-semibold">{t('tracking.visit.window')}:</span>
+								{formatDate(tracking.scheduledVisitStart, data.locale, { dateStyle: 'medium', timeStyle: 'short' })}
+								{#if tracking.scheduledVisitEnd}
+									– {formatDate(tracking.scheduledVisitEnd, data.locale, { timeStyle: 'short' })}
+								{/if}
+							</p>
+						{/if}
+						{#if tracking.visitStartedAt}
+							<p class="m-0 text-sky-900/80">
+								<span class="font-semibold">{t('tracking.visit.startedAt')}:</span>
+								{formatDate(tracking.visitStartedAt, data.locale, { dateStyle: 'medium', timeStyle: 'short' })}
+							</p>
+						{/if}
+						{#if tracking.visitCompletedAt}
+							<p class="m-0 text-emerald-800 font-medium">
+								<span class="font-semibold">{t('tracking.visit.completedAt')}:</span>
+								{formatDate(tracking.visitCompletedAt, data.locale, { dateStyle: 'medium', timeStyle: 'short' })}
+							</p>
+						{/if}
+					</div>
+				{/if}
+
 				<!-- Visual Milestone Progress Stepper -->
 				<div class="pt-0.5">
 					<span class="text-[11px] font-semibold text-secondary uppercase tracking-wider block mb-2.5">{t('tracking.statusTimeline')}</span>

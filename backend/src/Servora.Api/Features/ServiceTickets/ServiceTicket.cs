@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Servora.Api.Features.Customers;
 using Servora.Api.Features.Devices;
+using Servora.Api.Features.Dispatch;
 using Servora.Api.Features.Identity.Users;
 using Servora.Api.Features.ServiceStatuses;
 using Servora.Api.Features.Shops;
@@ -14,6 +15,15 @@ public enum ServiceLocationType
     InShop,
     OnSite,
     PickupDelivery
+}
+
+public enum DispatchStatus
+{
+    Unscheduled,
+    Scheduled,
+    EnRoute,
+    ArrivedOnSite,
+    VisitCompleted
 }
 
 public class ServiceTicket : IAuditableEntity
@@ -47,6 +57,12 @@ public class ServiceTicket : IAuditableEntity
     public string? SiteAddressSnapshot { get; set; }
     public DateTimeOffset? ScheduledVisitStart { get; set; }
     public DateTimeOffset? ScheduledVisitEnd { get; set; }
+    public int? ServiceResourceId { get; set; }
+    public ServiceResource? ServiceResource { get; set; }
+    public DispatchStatus DispatchStatus { get; set; } = DispatchStatus.Unscheduled;
+    public DateTimeOffset? VisitStartedAt { get; set; }
+    public DateTimeOffset? VisitCompletedAt { get; set; }
+    public string? DispatchNotes { get; set; }
     public int? ParentTicketId { get; set; }
     public ServiceTicket? ParentTicket { get; set; }
     public string Complaint { get; set; } = string.Empty;
@@ -114,6 +130,11 @@ public class ServiceTicketConfiguration : IEntityTypeConfiguration<ServiceTicket
         builder.Property(ticket => ticket.SiteAddressSnapshot).HasColumnName("site_address_snapshot").HasMaxLength(500);
         builder.Property(ticket => ticket.ScheduledVisitStart).HasColumnName("scheduled_visit_start");
         builder.Property(ticket => ticket.ScheduledVisitEnd).HasColumnName("scheduled_visit_end");
+        builder.Property(ticket => ticket.ServiceResourceId).HasColumnName("service_resource_id");
+        builder.Property(ticket => ticket.DispatchStatus).HasColumnName("dispatch_status").HasConversion<string>().IsRequired().HasMaxLength(30).HasDefaultValue(DispatchStatus.Unscheduled);
+        builder.Property(ticket => ticket.VisitStartedAt).HasColumnName("visit_started_at");
+        builder.Property(ticket => ticket.VisitCompletedAt).HasColumnName("visit_completed_at");
+        builder.Property(ticket => ticket.DispatchNotes).HasColumnName("dispatch_notes").HasMaxLength(1000);
         builder.Property(ticket => ticket.ParentTicketId).HasColumnName("parent_ticket_id");
         builder.Property(ticket => ticket.Complaint).IsRequired().HasMaxLength(2000);
         builder.Property(ticket => ticket.InitialDiagnosis).HasMaxLength(2000);
@@ -137,6 +158,7 @@ public class ServiceTicketConfiguration : IEntityTypeConfiguration<ServiceTicket
         builder.HasIndex(ticket => ticket.PublicTrackingToken).IsUnique();
         builder.HasIndex(ticket => new { ticket.ShopId, ticket.StatusId });
         builder.HasIndex(ticket => new { ticket.ShopId, ticket.ServiceLocationType, ticket.ScheduledVisitStart });
+        builder.HasIndex(ticket => new { ticket.ShopId, ticket.ScheduledVisitStart, ticket.ScheduledVisitEnd });
         builder.HasIndex(ticket => new { ticket.ShopId, ticket.IsInternalWorkOrder });
         builder.HasIndex(ticket => new { ticket.ShopId, ticket.DeletedAt, ticket.CreatedAt });
         builder.HasIndex(ticket => new { ticket.ShopId, ticket.DeletedAt, ticket.UpdatedAt });
@@ -166,6 +188,10 @@ public class ServiceTicketConfiguration : IEntityTypeConfiguration<ServiceTicket
         builder.HasOne(ticket => ticket.SiteLocation)
             .WithMany()
             .HasForeignKey(ticket => ticket.SiteLocationId)
+            .OnDelete(DeleteBehavior.SetNull);
+        builder.HasOne(ticket => ticket.ServiceResource)
+            .WithMany()
+            .HasForeignKey(ticket => ticket.ServiceResourceId)
             .OnDelete(DeleteBehavior.SetNull);
         builder.HasOne(ticket => ticket.ParentTicket)
             .WithMany()

@@ -3,6 +3,7 @@ using Servora.Api.Features.ServiceStatuses;
 using Servora.Api.Features.Settings;
 using Servora.Api.Features.Customers;
 using Servora.Api.Features.Devices;
+using Servora.Api.Features.Dispatch;
 using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Features.ServiceTemplates;
 using Servora.Api.Features.Notifications;
@@ -80,6 +81,7 @@ public class AppDbContext : IdentityDbContext<
     public DbSet<PaymentWebhookEvent> PaymentWebhookEvents => Set<PaymentWebhookEvent>();
     public DbSet<ServiceTicketWorkItem> ServiceTicketWorkItems => Set<ServiceTicketWorkItem>();
     public DbSet<MaintenanceSchedule> MaintenanceSchedules => Set<MaintenanceSchedule>();
+    public DbSet<ServiceResource> ServiceResources => Set<ServiceResource>();
     public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
     public DbSet<InventoryCategory> InventoryCategories => Set<InventoryCategory>();
     public DbSet<InventoryItem> InventoryItems => Set<InventoryItem>();

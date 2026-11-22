@@ -1161,6 +1161,81 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.ToTable("service_assets", (string)null);
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Dispatch.ServiceResource", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Color")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("#b45039")
+                        .HasColumnName("color");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("notes");
+
+                    b.Property<string>("ResourceType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("Bay")
+                        .HasColumnName("resource_type");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<int>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("sort_order");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShopId", "Name")
+                        .IsUnique();
+
+                    b.HasIndex("ShopId", "IsActive", "SortOrder");
+
+                    b.ToTable("service_resources", (string)null);
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Identity.Permissions.Permission", b =>
                 {
                     b.Property<int>("Id")
@@ -3026,6 +3101,19 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<string>("DispatchNotes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(1000)")
+                        .HasColumnName("dispatch_notes");
+
+                    b.Property<string>("DispatchStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("Unscheduled")
+                        .HasColumnName("dispatch_status");
+
                     b.Property<string>("IdempotencyKey")
                         .HasMaxLength(120)
                         .HasColumnType("varchar(120)");
@@ -3109,6 +3197,10 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasDefaultValue("InShop")
                         .HasColumnName("service_location_type");
 
+                    b.Property<int?>("ServiceResourceId")
+                        .HasColumnType("int")
+                        .HasColumnName("service_resource_id");
+
                     b.Property<int>("ShopId")
                         .HasColumnType("int")
                         .HasColumnName("workspace_id");
@@ -3141,6 +3233,14 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<DateTimeOffset?>("VisitCompletedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("visit_completed_at");
+
+                    b.Property<DateTimeOffset?>("VisitStartedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("visit_started_at");
+
                     b.Property<string>("WarrantyTerms")
                         .HasMaxLength(1000)
                         .HasColumnType("varchar(1000)");
@@ -3161,6 +3261,8 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.HasIndex("PublicTrackingToken")
                         .IsUnique();
 
+                    b.HasIndex("ServiceResourceId");
+
                     b.HasIndex("SiteLocationId");
 
                     b.HasIndex("StatusId");
@@ -3180,6 +3282,8 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.HasIndex("ShopId", "DeletedAt", "CreatedAt");
 
                     b.HasIndex("ShopId", "DeletedAt", "UpdatedAt");
+
+                    b.HasIndex("ShopId", "ScheduledVisitStart", "ScheduledVisitEnd");
 
                     b.HasIndex("ShopId", "ServiceLocationType", "ScheduledVisitStart");
 
@@ -4097,6 +4201,17 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.Navigation("SiteLocation");
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Dispatch.ServiceResource", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Shop");
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Identity.Permissions.RolePermission", b =>
                 {
                     b.HasOne("Servora.Api.Features.Identity.Permissions.Permission", "Permission")
@@ -4614,6 +4729,11 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasForeignKey("ParentTicketId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("Servora.Api.Features.Dispatch.ServiceResource", "ServiceResource")
+                        .WithMany()
+                        .HasForeignKey("ServiceResourceId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
                         .WithMany()
                         .HasForeignKey("ShopId")
@@ -4638,6 +4758,8 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.Navigation("Device");
 
                     b.Navigation("ParentTicket");
+
+                    b.Navigation("ServiceResource");
 
                     b.Navigation("Shop");
 

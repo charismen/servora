@@ -185,6 +185,7 @@
 				{ href: '/app', label: t('nav.dashboard'), icon: 'dashboard', visible: true },
 				{ href: '/app/tickets', label: terms.ticketPlural || t('nav.tickets'), icon: 'confirmation_number', visible: can(data.user.permissions, permissions.serviceTicketsRead) },
 				{ href: '/app/kanban', label: t('nav.kanban'), icon: 'view_kanban', visible: can(data.user.permissions, permissions.serviceTicketsRead) },
+				{ href: '/app/dispatch', label: t('nav.dispatch'), icon: 'calendar_month', visible: can(data.user.permissions, permissions.serviceTicketsRead) },
 				{ href: '/app/maintenance', label: t('nav.maintenance'), icon: 'event_repeat', visible: can(data.user.permissions, permissions.maintenanceRead) }
 			].filter((item) => item.visible)
 		},
