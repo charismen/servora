@@ -1,9 +1,13 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using Servora.Api.Features.Identity.Permissions;
 using Servora.Api.Features.Identity.Roles;
 using Servora.Api.Features.Identity.Users;
+using Servora.Api.Features.Notifications;
 using Servora.Api.Features.Payroll;
 using Servora.Api.Infrastructure.Activity;
 using Servora.Api.Infrastructure.Data;
@@ -39,10 +43,11 @@ public static class ShopUserEndpoints
         string Status,
         IReadOnlyCollection<RoleDto> Roles,
         string EmploymentType = "FullTime",
-        FreelanceProfileDto? FreelanceProfile = null);
+        FreelanceProfileDto? FreelanceProfile = null,
+        bool TwoFactorEnabled = false);
     public sealed record ShopUserPageDto(IReadOnlyCollection<ShopUserDto> Items, int Page, int PageSize, int TotalItems, int TotalPages);
     public sealed record PermissionDto(int Id, string Code, string? Description);
-    public sealed record CreateShopUserRequest(string Email, string Password, string FirstName, string LastName, IReadOnlyCollection<int> RoleIds, string? EmploymentType = null);
+    public sealed record CreateShopUserRequest(string Email, string? Password, string FirstName, string LastName, IReadOnlyCollection<int> RoleIds, string? EmploymentType = null, bool SendInviteEmail = false);
     public sealed record UpdateShopUserRequest(string FirstName, string LastName, string? Email = null, string? Password = null, string? EmploymentType = null);
     public sealed record UpdateEmploymentTypeRequest(string EmploymentType);
     public sealed record UpdateUserRolesRequest(IReadOnlyCollection<int> RoleIds);
@@ -241,7 +246,8 @@ public static class ShopUserEndpoints
                 user.Status.ToString(),
                 roles,
                 user.EmploymentType.ToString(),
-                profileDto);
+                profileDto,
+                user.User.TwoFactorEnabled);
         }).ToList();
 
         if (!shouldPage) return Results.Ok(items);
@@ -291,30 +297,41 @@ public static class ShopUserEndpoints
         AppDbContext context,
         IShopContext shopContext,
         IActivityLogger activityLogger,
+        NotificationDispatcherService notificationDispatcher,
+        IConfiguration configuration,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Email)) return Results.BadRequest("Email is required.");
-        if (string.IsNullOrWhiteSpace(request.Password)) return Results.BadRequest("Password is required.");
+        if (!request.SendInviteEmail && string.IsNullOrWhiteSpace(request.Password))
+        {
+            return Results.BadRequest("Password is required unless sending an invitation email.");
+        }
 
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var roleIds = request.RoleIds.Distinct().ToArray();
         if (!await RolesExistAsync(context, roleIds, cancellationToken)) return Results.BadRequest("One or more roles were not found.");
         var employmentType = ParseEmploymentType(request.EmploymentType);
 
-        var user = await userManager.FindByEmailAsync(request.Email.Trim());
+        var trimmedEmail = request.Email.Trim();
+        var user = await userManager.FindByEmailAsync(trimmedEmail);
+        var isNewUser = user is null;
         if (user is null)
         {
+            var effectivePassword = !string.IsNullOrWhiteSpace(request.Password)
+                ? request.Password
+                : $"Inv!{Convert.ToHexString(RandomNumberGenerator.GetBytes(12))}a1";
+
             user = new ApplicationUser
             {
-                UserName = request.Email.Trim(),
-                Email = request.Email.Trim(),
+                UserName = trimmedEmail,
+                Email = trimmedEmail,
                 EmailConfirmed = true,
                 FirstName = request.FirstName.Trim(),
                 LastName = request.LastName.Trim(),
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
             };
-            var result = await userManager.CreateAsync(user, request.Password);
+            var result = await userManager.CreateAsync(user, effectivePassword);
             if (!result.Succeeded) return Results.BadRequest(string.Join(" ", result.Errors.Select(error => error.Description)));
         }
 
@@ -346,7 +363,47 @@ public static class ShopUserEndpoints
 
         await ReplaceUserRolesAsync(context, shopUser, roleIds, cancellationToken);
         await activityLogger.LogAsync("ShopUser", user.Id, "ShopUserCreated", $"Shop user saved: {user.Email} ({employmentType})", cancellationToken: cancellationToken);
-        return Results.Created($"/api/v1/shop-users/{user.Id}", new { user.Id });
+
+        bool inviteSent = false;
+        string? inviteError = null;
+        if (request.SendInviteEmail && !string.IsNullOrWhiteSpace(user.Email))
+        {
+            var shopName = await context.Shops.AsNoTracking()
+                .Where(s => s.Id == shopId)
+                .Select(s => s.Name)
+                .FirstOrDefaultAsync(cancellationToken) ?? "Servora";
+            var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+            var resetToken = await userManager.GeneratePasswordResetTokenAsync(user);
+            var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(resetToken));
+            var setupUrl = $"{frontendBaseUrl}/reset-password?email={Uri.EscapeDataString(user.Email)}&token={Uri.EscapeDataString(encodedToken)}";
+
+            var subject = $"You're invited to join {shopName} on Servora";
+            var intro = isNewUser
+                ? $"You have been invited to join {shopName} on Servora. Use the link below to set your password and sign in:"
+                : $"You have been added to {shopName} on Servora. Use the link below if you need to set or reset your password:";
+            var plainText = $"{intro}\n\n{setupUrl}";
+            var html = MailKitEmailSender.BuildDefaultHtmlEmail(
+                shopName,
+                $"Welcome to {shopName}",
+                intro,
+                setupUrl,
+                "Set Password & Sign In");
+
+            var sendResult = await notificationDispatcher.SendDirectEmailAsync(
+                shopId: shopId,
+                toEmail: user.Email,
+                subject: subject,
+                plainTextBody: plainText,
+                htmlBody: html,
+                eventType: "auth.staff_invite",
+                referenceEntityType: "ShopUser",
+                referenceEntityId: user.Id,
+                cancellationToken: cancellationToken);
+            inviteSent = sendResult.Succeeded;
+            inviteError = sendResult.ErrorMessage;
+        }
+
+        return Results.Created($"/api/v1/shop-users/{user.Id}", new { user.Id, inviteSent, inviteError });
     }
 
     private static async Task<IResult> UpdateShopUserAsync(
@@ -591,7 +648,15 @@ public static class ShopUserEndpoints
         return Results.Ok(MapFreelanceProfileDto(reloaded));
     }
 
-    private static async Task<IResult> UpdateUserRolesAsync(int userId, UpdateUserRolesRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, CancellationToken cancellationToken)
+    private static async Task<IResult> UpdateUserRolesAsync(
+        int userId,
+        UpdateUserRolesRequest request,
+        AppDbContext context,
+        IShopContext shopContext,
+        IActivityLogger activityLogger,
+        NotificationDispatcherService notificationDispatcher,
+        IConfiguration configuration,
+        CancellationToken cancellationToken)
     {
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var shopUser = await context.ShopUsers
@@ -608,6 +673,28 @@ public static class ShopUserEndpoints
         if (!await RolesExistAsync(context, roleIds, cancellationToken)) return Results.BadRequest("One or more roles were not found.");
         await ReplaceUserRolesAsync(context, shopUser, roleIds, cancellationToken);
         await activityLogger.LogAsync("ShopUser", userId, "ShopUserRolesUpdated", "Shop user roles updated.", cancellationToken: cancellationToken);
+
+        var updatedRoleNames = await context.Roles.AsNoTracking()
+            .Where(r => roleIds.Contains(r.Id))
+            .Select(r => r.Name ?? string.Empty)
+            .OrderBy(n => n)
+            .ToListAsync(cancellationToken);
+        var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+        var memberName = $"{shopUser.User.FirstName} {shopUser.User.LastName}".Trim();
+        if (string.IsNullOrWhiteSpace(memberName)) memberName = shopUser.User.Email ?? $"User #{userId}";
+
+        await notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+            ShopId: shopId,
+            EventType: NotificationEventType.UserRolesUpdated,
+            Title: $"Role permissions updated for {memberName}",
+            Message: $"{memberName}'s workspace roles were updated to: {string.Join(", ", updatedRoleNames)}.",
+            DeepLinkUrl: $"{frontendBaseUrl}/app/users-roles",
+            AdditionalStaffEmail: shopUser.User.Email,
+            ReferenceEntityType: "ShopUser",
+            ReferenceEntityId: userId,
+            Data: new { userId, email = shopUser.User.Email, roles = updatedRoleNames }),
+            cancellationToken);
+
         return Results.NoContent();
     }
 

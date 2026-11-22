@@ -15,12 +15,39 @@
 	let phoneLastFour = $state('');
 	let startingCheckout = $state(false);
 	let checkoutError = $state('');
+	let sendingQuoteOtp = $state(false);
+	let respondingApprovalId = $state<number | null>(null);
+	let selectedOtpChannel = $state<string>('WhatsApp');
+	let quoteOtpCode = $state('');
+	let quoteNote = $state('');
+	let savedApprovalsPayload = $state<import('$lib/types/notifications').PublicQuoteApprovalsPayload | null>(null);
+	let savedOtpChallenge = $state<{ challengeToken: string; channel: string; maskedDestination: string; expiresAt: string } | null>(null);
+	let savedVerifiedPhone = $state('');
+
 	const unlockedAttachments = $derived(form?.attachments ?? tracking?.attachments ?? []);
-	const verifiedPhone = $derived(form?.verifiedPhoneLastFour ?? '');
-	const isUnlocked = $derived(Boolean(form?.verified) || unlockedAttachments.length > 0);
+	const verifiedPhone = $derived(form?.verifiedPhoneLastFour || savedVerifiedPhone);
+	const approvalsPayload = $derived(form?.approvalsPayload ?? savedApprovalsPayload);
+	const activeOtpChallenge = $derived(form?.otpChallenge ?? savedOtpChallenge);
+	const hasPendingApprovals = $derived((tracking?.pendingApprovalCount ?? 0) > 0);
+	const isUnlocked = $derived(Boolean(form?.verified) || Boolean(savedVerifiedPhone) || unlockedAttachments.length > 0);
 	const hasPublicPhotos = $derived((tracking?.publicPhotoCount ?? 0) > 0 || unlockedAttachments.length > 0);
 	const onlinePaymentEnabled = $derived(Boolean(tracking?.onlinePaymentEnabled));
 	const paymentRequiresPhone = $derived(Boolean(tracking?.paymentRequiresPhoneVerification ?? true));
+
+	$effect(() => {
+		if (form?.verifiedPhoneLastFour) savedVerifiedPhone = form.verifiedPhoneLastFour;
+		if (form?.approvalsPayload) savedApprovalsPayload = form.approvalsPayload;
+		if (form?.otpChallenge) savedOtpChallenge = form.otpChallenge;
+		if (form?.approvalResolvedDecision) {
+			savedOtpChallenge = null;
+			quoteOtpCode = '';
+			quoteNote = '';
+		}
+		const channels = approvalsPayload?.otpChannels ?? tracking?.quoteApprovalOtpChannels ?? [];
+		if (channels.length > 0 && !channels.some((c) => c.channel === selectedOtpChannel)) {
+			selectedOtpChannel = channels[0].channel;
+		}
+	});
 	const unlockedPaymentSummary = $derived(
 		form?.paymentSummary ??
 			(onlinePaymentEnabled && !paymentRequiresPhone
@@ -296,6 +323,241 @@
 				</div>
 			{/if}
 
+			<!-- Quote Approval Section -->
+			{#if hasPendingApprovals || (approvalsPayload && approvalsPayload.approvals.length > 0)}
+				<section class="bg-white border border-stone rounded-xl p-5 sm:p-8 shadow-2xs space-y-4 sm:space-y-5">
+					<div class="flex flex-wrap items-center justify-between gap-2.5 border-b border-stone/70 pb-3.5">
+						<div class="min-w-0 flex-1">
+							<h2 class="m-0 font-subheading text-base sm:text-subheading font-bold text-primary leading-snug">
+								{t('tracking.approval.title')}
+							</h2>
+							<p class="m-0 text-caption text-secondary mt-0.5">{t('tracking.approval.subtitle')}</p>
+						</div>
+						{#if hasPendingApprovals}
+							<span class="px-2.5 py-1 rounded-full bg-amber-100 border border-amber-200 text-caption font-semibold text-amber-900 leading-none">
+								{tracking.pendingApprovalCount} {t('tracking.approval.pendingBadge')}
+							</span>
+						{/if}
+					</div>
+
+					{#if form?.approvalResolvedDecision}
+						<div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-body-sm font-medium text-emerald-800">
+							{form.approvalResolvedDecision === 'Approve'
+								? t('tracking.approval.approvedThanks')
+								: t('tracking.approval.rejectedThanks')}
+						</div>
+					{/if}
+
+					{#if form?.approvalError}
+						<div class="rounded-lg border border-error/30 bg-error/10 px-3.5 py-2 text-body-sm text-error">
+							{form.approvalError}
+						</div>
+					{/if}
+
+					{#if !approvalsPayload}
+						<div class="rounded-lg border border-stone bg-ash/30 p-4 sm:p-6 space-y-4">
+							<p class="m-0 text-body-sm text-secondary">{t('tracking.approval.lockedDescription')}</p>
+							{#if verifyError || form?.errorKey}
+								<div class="rounded-lg border border-error/30 bg-error/10 px-3.5 py-2 text-body-sm text-error">
+									{verifyError || (form?.errorKey ? t(form.errorKey) : '')}
+								</div>
+							{/if}
+							<form
+								method="POST"
+								action="?/verifyPhotos"
+								class="flex flex-col sm:flex-row items-stretch sm:items-end gap-3"
+								use:enhance={() => {
+									verifying = true;
+									verifyError = '';
+									return async ({ result, update }) => {
+										try {
+											if (result.type === 'error') {
+												verifyError = formatEnhanceUnexpectedError(result.error, t);
+												return;
+											}
+											await update({ reset: false });
+										} finally {
+											verifying = false;
+										}
+									};
+								}}
+							>
+								<input type="hidden" name="includeApprovals" value="true" />
+								<input type="hidden" name="includePayment" value={onlinePaymentEnabled ? 'true' : 'false'} />
+								<input type="hidden" name="includePhotos" value={hasPublicPhotos ? 'true' : 'false'} />
+								<label class="space-y-1.5 flex-1">
+									<span class="block text-caption font-semibold uppercase text-secondary">{t('tracking.phoneLastFourLabel')}</span>
+									<input
+										name="phoneLastFour"
+										type="text"
+										inputmode="numeric"
+										maxlength="4"
+										bind:value={phoneLastFour}
+										oninput={(e) => {
+											phoneLastFour = e.currentTarget.value.replace(/\D/g, '').slice(0, 4);
+										}}
+										placeholder={t('tracking.phoneLastFourPlaceholder')}
+										class="w-full rounded-input border border-stone bg-white px-4 py-2.5 font-mono text-center text-lg tracking-[0.25em] text-primary focus:border-ink focus:outline-none"
+										required
+									/>
+								</label>
+								<button
+									type="submit"
+									disabled={verifying || phoneLastFour.replace(/\D/g, '').length !== 4}
+									class="px-button-x py-2.5 rounded-button bg-ink text-white font-medium hover:bg-ink/90 transition-all disabled:opacity-50 cursor-pointer h-[42px]"
+								>
+									<span>{verifying ? t('tracking.payment.unlocking') : t('tracking.approval.unlockButton')}</span>
+								</button>
+							</form>
+						</div>
+					{:else}
+						<div class="space-y-4">
+							{#each approvalsPayload.approvals as approval (approval.id)}
+								<div class="rounded-xl border border-stone bg-ash/20 p-4 sm:p-5 space-y-3">
+									<div class="flex flex-wrap items-start justify-between gap-2">
+										<div>
+											<h3 class="m-0 text-sm font-bold text-primary">{approval.title}</h3>
+											<p class="m-0 text-xs text-secondary mt-1">{approval.description}</p>
+										</div>
+										<span
+											class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold {approval.status === 'Approved'
+												? 'bg-emerald-100 text-emerald-800'
+												: approval.status === 'Rejected'
+													? 'bg-red-100 text-red-800'
+													: 'bg-amber-100 text-amber-900'}"
+										>
+											{approval.status}
+										</span>
+									</div>
+
+									{#if approval.proposedWorkItems && approval.proposedWorkItems.length > 0}
+										<div class="rounded-lg border border-stone/80 bg-white divide-y divide-stone/60 text-xs">
+											{#each approval.proposedWorkItems as item (item.id)}
+												<div class="px-3 py-2 flex items-center justify-between gap-3">
+													<span class="text-primary font-medium">{item.title} × {item.quantity}</span>
+													<span class="font-mono font-semibold text-primary tabular-nums">
+														{formatCurrency(item.lineTotal, data.locale, approvalsPayload.currencyCode)}
+													</span>
+												</div>
+											{/each}
+										</div>
+									{/if}
+
+									{#if approval.estimatedAmount != null}
+										<div class="flex items-center justify-between text-sm font-bold text-primary pt-1">
+											<span>{t('tracking.approval.estimatedTotal')}</span>
+											<span class="font-mono text-claytile tabular-nums">
+												{formatCurrency(approval.estimatedAmount, data.locale, approvalsPayload.currencyCode)}
+											</span>
+										</div>
+									{/if}
+
+									{#if approval.status === 'Pending'}
+										{#if approvalsPayload.requiresOtp}
+											<div class="rounded-lg border border-stone bg-white p-3.5 space-y-3">
+												<p class="m-0 text-xs font-semibold text-primary">{t('tracking.approval.otpRequiredTitle')}</p>
+												<form
+													method="POST"
+													action="?/sendQuoteOtp"
+													class="flex flex-wrap items-center gap-2"
+													use:enhance={() => {
+														sendingQuoteOtp = true;
+														return async ({ update }) => {
+															await update({ reset: false });
+															sendingQuoteOtp = false;
+														};
+													}}
+												>
+													<input type="hidden" name="phoneLastFour" value={verifiedPhone || phoneLastFour} />
+													{#each approvalsPayload.otpChannels as ch (ch.channel)}
+														<label class="inline-flex items-center gap-1.5 rounded-lg border border-stone px-2.5 py-1.5 text-xs cursor-pointer {selectedOtpChannel === ch.channel ? 'bg-ink text-white border-ink' : 'bg-ash/40 text-primary'}">
+															<input
+																type="radio"
+																name="channel"
+																value={ch.channel}
+																bind:group={selectedOtpChannel}
+																class="sr-only"
+															/>
+															<span>{ch.channel} ({ch.maskedDestination})</span>
+														</label>
+													{/each}
+													<button
+														type="submit"
+														disabled={sendingQuoteOtp}
+														class="rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 cursor-pointer disabled:opacity-50"
+													>
+														{sendingQuoteOtp ? t('common.loading') : t('tracking.approval.sendOtpBtn')}
+													</button>
+												</form>
+
+												{#if activeOtpChallenge}
+													<p class="m-0 text-xs text-emerald-800">
+														{t('tracking.approval.otpSentHint')} <strong class="font-mono">{activeOtpChallenge.maskedDestination}</strong>
+													</p>
+													<input
+														type="text"
+														inputmode="numeric"
+														maxlength="6"
+														bind:value={quoteOtpCode}
+														placeholder="000000"
+														class="w-full h-10 rounded-lg border border-stone px-3 font-mono text-center tracking-[0.25em] text-base"
+													/>
+												{/if}
+											</div>
+										{/if}
+
+										<form
+											method="POST"
+											action="?/respondApproval"
+											class="space-y-3 pt-1"
+											use:enhance={() => {
+												respondingApprovalId = approval.id;
+												return async ({ update }) => {
+													await update({ reset: false });
+													respondingApprovalId = null;
+												};
+											}}
+										>
+											<input type="hidden" name="phoneLastFour" value={verifiedPhone || phoneLastFour} />
+											<input type="hidden" name="approvalId" value={approval.id} />
+											<input type="hidden" name="challengeToken" value={activeOtpChallenge?.challengeToken ?? ''} />
+											<input type="hidden" name="otpCode" value={quoteOtpCode} />
+											<input
+												name="note"
+												type="text"
+												bind:value={quoteNote}
+												placeholder={t('tracking.approval.notePlaceholder')}
+												class="w-full h-9 rounded-lg border border-stone bg-white px-3 text-xs"
+											/>
+											<div class="flex flex-wrap gap-2">
+												<button
+													type="submit"
+													name="decision"
+													value="Approve"
+													disabled={respondingApprovalId === approval.id || (approvalsPayload.requiresOtp && quoteOtpCode.replace(/\D/g, '').length < 6)}
+													class="flex-1 rounded-button bg-emerald-700 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-800 cursor-pointer disabled:opacity-50"
+												>
+													{t('tracking.approval.approveBtn')}
+												</button>
+												<button
+													type="submit"
+													name="decision"
+													value="Reject"
+													disabled={respondingApprovalId === approval.id || (approvalsPayload.requiresOtp && quoteOtpCode.replace(/\D/g, '').length < 6)}
+													class="rounded-button border border-red-300 bg-white px-4 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 cursor-pointer disabled:opacity-50"
+												>
+													{t('tracking.approval.declineBtn')}
+												</button>
+											</div>
+										</form>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</section>
+			{/if}
+
 			<!-- Online Payment Section -->
 			{#if onlinePaymentEnabled}
 				<section class="bg-white border border-stone rounded-xl p-5 sm:p-8 shadow-2xs space-y-4 sm:space-y-5">
@@ -343,6 +605,7 @@
 							>
 								<input type="hidden" name="includePayment" value="true" />
 								<input type="hidden" name="includePhotos" value={hasPublicPhotos ? 'true' : 'false'} />
+								<input type="hidden" name="includeApprovals" value={hasPendingApprovals ? 'true' : 'false'} />
 								<label class="space-y-1.5 flex-1">
 									<span class="block text-caption font-semibold uppercase text-secondary">{t('tracking.phoneLastFourLabel')}</span>
 									<input

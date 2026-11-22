@@ -83,6 +83,11 @@ public class AppDbContext : IdentityDbContext<
     public DbSet<MaintenanceSchedule> MaintenanceSchedules => Set<MaintenanceSchedule>();
     public DbSet<ServiceResource> ServiceResources => Set<ServiceResource>();
     public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
+    public DbSet<WorkspaceNotificationChannel> WorkspaceNotificationChannels => Set<WorkspaceNotificationChannel>();
+    public DbSet<WorkspaceNotificationRule> WorkspaceNotificationRules => Set<WorkspaceNotificationRule>();
+    public DbSet<WorkspaceWebhookEndpoint> WorkspaceWebhookEndpoints => Set<WorkspaceWebhookEndpoint>();
+    public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<OtpVerificationChallenge> OtpVerificationChallenges => Set<OtpVerificationChallenge>();
     public DbSet<InventoryCategory> InventoryCategories => Set<InventoryCategory>();
     public DbSet<InventoryItem> InventoryItems => Set<InventoryItem>();
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
@@ -112,6 +117,7 @@ public class AppDbContext : IdentityDbContext<
             builder.Property(user => user.FirstName).HasColumnName("first_name");
             builder.Property(user => user.LastName).HasColumnName("last_name");
             builder.Property(user => user.IsActive).HasColumnName("is_active");
+            builder.Property(user => user.PreferredTwoFactorMethod).HasColumnName("preferred_two_factor_method").HasConversion<string>().IsRequired().HasMaxLength(30).HasDefaultValue(TwoFactorMethod.None);
             builder.Property(user => user.CreatedAt).HasColumnName("created_at");
             builder.Property(user => user.UpdatedAt).HasColumnName("updated_at");
             builder.HasIndex(user => new { user.FirstName, user.LastName });

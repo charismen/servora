@@ -17,11 +17,19 @@
 	let showPassword = $state(false);
 	let isSubmitting = $state(false);
 	let unexpectedError = $state('');
+	let useRecoveryCode = $state(false);
+	let twoFactorCode = $state('');
+	let resending = $state(false);
+
+	const isTwoFactorStep = $derived(Boolean(form?.twoFactorStep && form?.challengeToken));
 	const displayError = $derived(unexpectedError || form?.message || '');
 
 	$effect(() => {
 		if (form?.email) {
 			email = form.email;
+		}
+		if (typeof form?.useRecoveryCode === 'boolean') {
+			useRecoveryCode = form.useRecoveryCode;
 		}
 	});
 
@@ -36,7 +44,7 @@
 </svelte:head>
 
 <div class="login-screen">
-	<!-- Hero / Brand Section (Left on desktop, below form on mobile) -->
+	<!-- Hero / Brand Section -->
 	<section class="login-hero" aria-label={t('app.title')}>
 		<div class="login-brand">
 			<a href="/" class="login-brand-mark bg-transparent! p-0 w-11 h-11" title={t('auth.backToHome')}>
@@ -69,7 +77,7 @@
 		</div>
 	</section>
 
-	<!-- Main / Login Form Section (Right on desktop, top on mobile) -->
+	<!-- Main / Login Form Section -->
 	<main class="login-main">
 		<div class="login-tools">
 			<a
@@ -86,7 +94,7 @@
 				<Dropdown
 					name="locale"
 					value={data.locale}
-					options={locales.map(l => ({ value: l.code, label: l.label }))}
+					options={locales.map((l) => ({ value: l.code, label: l.label }))}
 					onchange={() => setTimeout(() => localeFormEl?.requestSubmit(), 0)}
 					size="sm"
 					class="w-36 sm:w-40 shrink-0"
@@ -96,118 +104,264 @@
 		</div>
 
 		<section class="login-card" aria-labelledby="login-heading">
-			<div class="login-card-header">
-				<h2 id="login-heading">{t('auth.cardTitle')}</h2>
-				<p>{t('auth.cardSubtitle')}</p>
-			</div>
-
-			<!-- Quick-fill demo credentials helper (Development only, strictly omitted in Production) -->
-			{#if data.isDev && data.demoAccounts && data.demoAccounts.length > 0}
-				<div class="mb-5 flex flex-wrap items-center gap-2 justify-start">
-					{#each data.demoAccounts as account (account.userId)}
-						<button
-							type="button"
-							class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-metal hover:text-ink bg-ash hover:bg-stone/60 border border-stone/80 rounded-full transition-colors cursor-pointer"
-							onclick={() => fillDemoAccount(account)}
-							title={`${account.name} (${account.role}) · ${account.email}`}
-						>
-							<span class="material-symbols-outlined text-[13px]">
-								{account.email === 'admin@example.com' ? 'key' : 'badge'}
-							</span>
-							<span>{account.name}</span>
-							<span class="text-[10px] text-secondary">({account.role})</span>
-						</button>
-					{/each}
+			{#if isTwoFactorStep}
+				<div class="login-card-header">
+					<h2 id="login-heading">{t('auth.twoFactorTitle')}</h2>
+					<p>
+						{#if useRecoveryCode}
+							{t('auth.twoFactorRecoveryHint')}
+						{:else if form?.method === 'EmailOtp'}
+							{t('auth.twoFactorEmailHint')}
+							{#if form?.maskedEmail}
+								<strong class="font-mono text-ink"> ({form.maskedEmail})</strong>
+							{/if}
+						{:else}
+							{t('auth.twoFactorTotpHint')}
+						{/if}
+					</p>
 				</div>
-			{/if}
 
-			<form
-				class="login-form"
-				method="POST"
-				use:enhance={() => {
-					isSubmitting = true;
-					unexpectedError = '';
-					return async ({ result, update }) => {
-						try {
-							if (result.type === 'error') {
-								unexpectedError = formatEnhanceUnexpectedError(result.error, t);
-								return;
-							}
-							await update();
-						} finally {
-							isSubmitting = false;
-						}
-					};
-				}}
-			>
-				<input type="hidden" name="redirectTo" value={form?.redirectTo ?? data.redirectTo} />
-
-				{#if displayError}
-					<div class="form-error flex items-center gap-2" role="alert">
-						<span class="material-symbols-outlined text-[16px] shrink-0">error</span>
-						<span>{displayError}</span>
+				{#if form?.resent}
+					<div class="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-800 flex items-center gap-2">
+						<span class="material-symbols-outlined text-[16px]">check_circle</span>
+						<span>{t('auth.twoFactorCodeResent')}</span>
 					</div>
 				{/if}
 
-				<div class="field">
-					<label for="email">{t('auth.email')}</label>
-					<input
-						id="email"
-						name="email"
-						bind:value={email}
-						type="email"
-						placeholder={t('auth.emailPlaceholder')}
-						autocomplete="email"
-						required
-					/>
-				</div>
+				<form
+					class="login-form"
+					method="POST"
+					action="?/verify2fa"
+					use:enhance={() => {
+						isSubmitting = true;
+						unexpectedError = '';
+						return async ({ result, update }) => {
+							try {
+								if (result.type === 'error') {
+									unexpectedError = formatEnhanceUnexpectedError(result.error, t);
+									return;
+								}
+								await update();
+							} finally {
+								isSubmitting = false;
+							}
+						};
+					}}
+				>
+					<input type="hidden" name="challengeToken" value={form?.challengeToken ?? ''} />
+					<input type="hidden" name="method" value={form?.method ?? 'AuthenticatorTotp'} />
+					<input type="hidden" name="maskedEmail" value={form?.maskedEmail ?? ''} />
+					<input type="hidden" name="email" value={form?.email ?? email} />
+					<input type="hidden" name="redirectTo" value={form?.redirectTo ?? data.redirectTo} />
+					<input type="hidden" name="useRecoveryCode" value={useRecoveryCode ? 'true' : 'false'} />
 
-				<div class="field">
-					<div class="login-label-row">
-						<label for="password">{t('auth.password')}</label>
-						<a href="#forgot" onclick={(event) => event.preventDefault()}>{t('auth.forgot')}</a>
-					</div>
-					<div class="relative flex items-center">
+					{#if displayError}
+						<div class="form-error flex items-center gap-2" role="alert">
+							<span class="material-symbols-outlined text-[16px] shrink-0">error</span>
+							<span>{displayError}</span>
+						</div>
+					{/if}
+
+					<div class="field">
+						<label for="twoFactorCode">
+							{useRecoveryCode ? t('auth.twoFactorRecoveryLabel') : t('auth.twoFactorCodeLabel')}
+						</label>
 						<input
-							id="password"
-							name="password"
-							bind:value={password}
-							type={showPassword ? 'text' : 'password'}
-							placeholder="••••••••"
-							autocomplete="current-password"
-							class="w-full pr-10"
+							id="twoFactorCode"
+							name="code"
+							bind:value={twoFactorCode}
+							type="text"
+							inputmode={useRecoveryCode ? 'text' : 'numeric'}
+							autocomplete="one-time-code"
+							placeholder={useRecoveryCode ? 'XXXXX-XXXXX' : '000000'}
+							class="font-mono tracking-widest text-center text-lg"
 							required
 						/>
-						<button
-							type="button"
-							class="absolute right-2.5 text-secondary hover:text-ink cursor-pointer p-0.5"
-							onclick={() => (showPassword = !showPassword)}
-							title={showPassword ? 'Hide password' : 'Show password'}
-							tabindex="-1"
-						>
-							<span class="material-symbols-outlined text-[18px]">
-								{showPassword ? 'visibility_off' : 'visibility'}
-							</span>
-						</button>
 					</div>
+
+					<button class="button login-submit flex items-center justify-center gap-2" type="submit" disabled={isSubmitting}>
+						{#if isSubmitting}
+							<span class="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+						{/if}
+						<span>{t('auth.twoFactorVerify')}</span>
+					</button>
+				</form>
+
+				<div class="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs">
+					<button
+						type="button"
+						class="text-claytile hover:underline font-medium cursor-pointer"
+						onclick={() => {
+							useRecoveryCode = !useRecoveryCode;
+							twoFactorCode = '';
+						}}
+					>
+						{useRecoveryCode ? t('auth.twoFactorUseCode') : t('auth.twoFactorUseRecovery')}
+					</button>
+
+					{#if form?.method === 'EmailOtp' && !useRecoveryCode}
+						<form
+							method="POST"
+							action="?/resend2fa"
+							use:enhance={() => {
+								resending = true;
+								return async ({ update }) => {
+									await update();
+									resending = false;
+								};
+							}}
+						>
+							<input type="hidden" name="challengeToken" value={form?.challengeToken ?? ''} />
+							<input type="hidden" name="method" value={form?.method ?? 'EmailOtp'} />
+							<input type="hidden" name="maskedEmail" value={form?.maskedEmail ?? ''} />
+							<input type="hidden" name="email" value={form?.email ?? email} />
+							<input type="hidden" name="redirectTo" value={form?.redirectTo ?? data.redirectTo} />
+							<button type="submit" class="text-metal hover:text-ink underline cursor-pointer" disabled={resending}>
+								{resending ? t('common.loading') : t('auth.twoFactorResend')}
+							</button>
+						</form>
+					{/if}
 				</div>
 
-				<button class="button login-submit flex items-center justify-center gap-2" type="submit" disabled={isSubmitting}>
-					{#if isSubmitting}
-						<span class="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
-					{/if}
-					<span>{t('auth.submit')}</span>
-				</button>
-			</form>
+				<div class="mt-4 pt-3 border-t border-stone/70 text-center">
+					<a href="/login" class="text-xs text-secondary hover:text-ink">
+						{t('auth.twoFactorBackToLogin')}
+					</a>
+				</div>
+			{:else}
+				<div class="login-card-header">
+					<h2 id="login-heading">{t('auth.cardTitle')}</h2>
+					<p>{t('auth.cardSubtitle')}</p>
+				</div>
 
-			<p class="login-help">
-				{t('auth.help')} <a href="#help" onclick={(event) => event.preventDefault()}>{t('auth.contactAdmin')}</a>
-			</p>
+				{#if data.resetDone}
+					<div class="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-800 flex items-center gap-2">
+						<span class="material-symbols-outlined text-[16px]">check_circle</span>
+						<span>{t('auth.resetPasswordSuccessLogin')}</span>
+					</div>
+				{/if}
+
+				{#if data.verifiedDone}
+					<div class="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-800 flex items-center gap-2">
+						<span class="material-symbols-outlined text-[16px]">verified</span>
+						<span>{t('auth.verifyEmailSuccessLogin')}</span>
+					</div>
+				{/if}
+
+				{#if data.isDev && data.demoAccounts && data.demoAccounts.length > 0}
+					<div class="mb-5 flex flex-wrap items-center gap-2 justify-start">
+						{#each data.demoAccounts as account (account.userId)}
+							<button
+								type="button"
+								class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-metal hover:text-ink bg-ash hover:bg-stone/60 border border-stone/80 rounded-full transition-colors cursor-pointer"
+								onclick={() => fillDemoAccount(account)}
+								title={`${account.name} (${account.role}) · ${account.email}`}
+							>
+								<span class="material-symbols-outlined text-[13px]">
+									{account.email === 'admin@example.com' ? 'key' : 'badge'}
+								</span>
+								<span>{account.name}</span>
+								<span class="text-[10px] text-secondary">({account.role})</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+
+				<form
+					class="login-form"
+					method="POST"
+					action="?/login"
+					use:enhance={() => {
+						isSubmitting = true;
+						unexpectedError = '';
+						return async ({ result, update }) => {
+							try {
+								if (result.type === 'error') {
+									unexpectedError = formatEnhanceUnexpectedError(result.error, t);
+									return;
+								}
+								await update();
+							} finally {
+								isSubmitting = false;
+							}
+						};
+					}}
+				>
+					<input type="hidden" name="redirectTo" value={form?.redirectTo ?? data.redirectTo} />
+
+					{#if displayError}
+						<div class="form-error flex items-center gap-2" role="alert">
+							<span class="material-symbols-outlined text-[16px] shrink-0">error</span>
+							<span>{displayError}</span>
+						</div>
+					{/if}
+
+					<div class="field">
+						<label for="email">{t('auth.email')}</label>
+						<input
+							id="email"
+							name="email"
+							bind:value={email}
+							type="email"
+							placeholder={t('auth.emailPlaceholder')}
+							autocomplete="email"
+							required
+						/>
+					</div>
+
+					<div class="field">
+						<div class="login-label-row">
+							<label for="password">{t('auth.password')}</label>
+							<a href="/forgot-password">{t('auth.forgot')}</a>
+						</div>
+						<div class="relative flex items-center">
+							<input
+								id="password"
+								name="password"
+								bind:value={password}
+								type={showPassword ? 'text' : 'password'}
+								placeholder="••••••••"
+								autocomplete="current-password"
+								class="w-full pr-10"
+								required
+							/>
+							<button
+								type="button"
+								class="absolute right-2.5 text-secondary hover:text-ink cursor-pointer p-0.5"
+								onclick={() => (showPassword = !showPassword)}
+								title={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+								tabindex="-1"
+							>
+								<span class="material-symbols-outlined text-[18px]">
+									{showPassword ? 'visibility_off' : 'visibility'}
+								</span>
+							</button>
+						</div>
+					</div>
+
+					<button class="button login-submit flex items-center justify-center gap-2" type="submit" disabled={isSubmitting}>
+						{#if isSubmitting}
+							<span class="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+						{/if}
+						<span>{t('auth.submit')}</span>
+					</button>
+				</form>
+
+				{#if data.allowPublicRegistration}
+					<p class="login-help">
+						{t('auth.noAccountPrompt')} <a href="/register">{t('auth.createAccount')}</a>
+					</p>
+				{:else}
+					<p class="login-help">
+						{t('auth.help')} <a href="/forgot-password">{t('auth.forgot')}</a>
+					</p>
+				{/if}
+			{/if}
 		</section>
 
 		<footer class="login-footer">
 			<span>© {new Date().getFullYear()} {t('brand.name')}.</span>
-			<a href="#status" onclick={(event) => event.preventDefault()}>{t('auth.status')}</a>
+			<a href="/">{t('auth.backToHome')}</a>
 		</footer>
 	</main>
 </div>

@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { serverApiRequest, ServerApiError } from '$lib/server/api';
 import type { TerminologyConfig } from '$lib/types/auth';
 import type { FieldValueDto } from '$lib/types/blueprints';
+import type { PublicOtpChannelOption, PublicQuoteApprovalsPayload } from '$lib/types/notifications';
 import type { PublicTrackingPaymentSummary } from '$lib/types/payments';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -49,6 +50,9 @@ type PublicTracking = {
 	currencyCode?: string | null;
 	activePaymentUrl?: string | null;
 	activePaymentExpiresAt?: string | null;
+	pendingApprovalCount?: number;
+	quoteApprovalRequiresOtp?: boolean;
+	quoteApprovalOtpChannels?: PublicOtpChannelOption[];
 };
 
 export const load: PageServerLoad = async ({ fetch, params, url }) => {
@@ -70,6 +74,7 @@ export const actions: Actions = {
 		const phoneLastFour = String(form.get('phoneLastFour') ?? '').replace(/\D/g, '').trim();
 		const includePayment = form.get('includePayment') === 'true';
 		const includePhotos = form.get('includePhotos') !== 'false';
+		const includeApprovals = form.get('includeApprovals') === 'true';
 		if (phoneLastFour.length !== 4) {
 			return fail(400, { errorKey: 'tracking.invalidPhoneLastFour' });
 		}
@@ -77,6 +82,7 @@ export const actions: Actions = {
 		try {
 			let attachments: PublicTrackingAttachment[] = [];
 			let paymentSummary: PublicTrackingPaymentSummary | null = null;
+			let approvalsPayload: PublicQuoteApprovalsPayload | null = null;
 
 			if (includePhotos) {
 				const response = await serverApiRequest<{ attachments: PublicTrackingAttachment[] }>(
@@ -101,13 +107,106 @@ export const actions: Actions = {
 				);
 			}
 
-			return { verified: true, verifiedPhoneLastFour: phoneLastFour, attachments, paymentSummary };
+			if (includeApprovals) {
+				approvalsPayload = await serverApiRequest<PublicQuoteApprovalsPayload>(
+					fetch,
+					`/track/${params.token}/approvals`,
+					{
+						method: 'POST',
+						body: { phoneLastFour }
+					}
+				);
+			}
+
+			return {
+				verified: true,
+				verifiedPhoneLastFour: phoneLastFour,
+				attachments,
+				paymentSummary,
+				approvalsPayload
+			};
 		} catch (error) {
 			if (error instanceof ServerApiError) {
 				if (error.status === 429) {
 					return fail(429, { errorKey: 'tracking.tooManyAttempts' });
 				}
 				return fail(error.status, { errorKey: 'tracking.invalidPhoneLastFour' });
+			}
+			throw error;
+		}
+	},
+
+	sendQuoteOtp: async ({ request, fetch, params }) => {
+		const form = await request.formData();
+		const phoneLastFour = String(form.get('phoneLastFour') ?? '').replace(/\D/g, '').trim();
+		const channel = String(form.get('channel') ?? 'WhatsApp');
+
+		try {
+			const otpChallenge = await serverApiRequest<{
+				challengeToken: string;
+				channel: string;
+				maskedDestination: string;
+				expiresAt: string;
+			}>(fetch, `/track/${params.token}/approvals/send-otp`, {
+				method: 'POST',
+				body: { phoneLastFour, channel }
+			});
+			const approvalsPayload = await serverApiRequest<PublicQuoteApprovalsPayload>(
+				fetch,
+				`/track/${params.token}/approvals`,
+				{ method: 'POST', body: { phoneLastFour } }
+			);
+			return {
+				verified: true,
+				verifiedPhoneLastFour: phoneLastFour,
+				approvalsPayload,
+				otpChallenge,
+				otpSent: true
+			};
+		} catch (error) {
+			if (error instanceof ServerApiError) {
+				return fail(error.status, {
+					verified: true,
+					verifiedPhoneLastFour: phoneLastFour,
+					approvalError: error.message
+				});
+			}
+			throw error;
+		}
+	},
+
+	respondApproval: async ({ request, fetch, params }) => {
+		const form = await request.formData();
+		const phoneLastFour = String(form.get('phoneLastFour') ?? '').replace(/\D/g, '').trim();
+		const approvalId = Number(form.get('approvalId'));
+		const decision = String(form.get('decision') ?? '');
+		const note = String(form.get('note') ?? '').trim() || null;
+		const challengeToken = String(form.get('challengeToken') ?? '').trim() || null;
+		const otpCode = String(form.get('otpCode') ?? '').trim() || null;
+
+		try {
+			await serverApiRequest(fetch, `/track/${params.token}/approvals/${approvalId}/respond`, {
+				method: 'POST',
+				body: { phoneLastFour, challengeToken, otpCode, decision, note }
+			});
+			const approvalsPayload = await serverApiRequest<PublicQuoteApprovalsPayload>(
+				fetch,
+				`/track/${params.token}/approvals`,
+				{ method: 'POST', body: { phoneLastFour } }
+			);
+			return {
+				verified: true,
+				verifiedPhoneLastFour: phoneLastFour,
+				approvalsPayload,
+				approvalResolvedDecision: decision
+			};
+		} catch (error) {
+			if (error instanceof ServerApiError) {
+				return fail(error.status, {
+					verified: true,
+					verifiedPhoneLastFour: phoneLastFour,
+					approvalError: error.message
+				});
 			}
 			throw error;
 		}

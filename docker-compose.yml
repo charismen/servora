@@ -52,6 +52,15 @@ services:
       Jwt__Audience: ${JWT_AUDIENCE:-ServoraClients}
       Jwt__Key: ${JWT_KEY:-change-me-to-a-long-random-secret-key-at-least-32-chars}
       Security__SecretEncryptionKey: ${SECRET_ENCRYPTION_KEY:-}
+      Auth__AllowPublicRegistration: ${AUTH_ALLOW_PUBLIC_REGISTRATION:-false}
+      Email__Smtp__Host: ${EMAIL_SMTP_HOST:-}
+      Email__Smtp__Port: ${EMAIL_SMTP_PORT:-587}
+      Email__Smtp__UseSsl: ${EMAIL_SMTP_USE_SSL:-true}
+      Email__Smtp__Username: ${EMAIL_SMTP_USERNAME:-}
+      Email__Smtp__Password: ${EMAIL_SMTP_PASSWORD:-}
+      Email__Smtp__FromEmail: ${EMAIL_SMTP_FROM_EMAIL:-}
+      Email__Smtp__FromName: ${EMAIL_SMTP_FROM_NAME:-Servora}
+      Webhooks__AllowPrivateTargets: ${WEBHOOKS_ALLOW_PRIVATE_TARGETS:-false}
       PublicFrontendBaseUrl: ${PUBLIC_FRONTEND_BASE_URL:-http://localhost:3000}
       Cors__AllowedOrigins__0: http://localhost:3000
       Cors__AllowedOrigins__1: http://127.0.0.1:3000

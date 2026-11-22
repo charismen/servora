@@ -7,6 +7,7 @@ using Servora.Api.Features.Blueprints;
 using Servora.Api.Features.Devices;
 using Servora.Api.Features.Identity.Permissions;
 using Servora.Api.Features.Inventory;
+using Servora.Api.Features.Notifications;
 using Servora.Api.Features.Payments;
 using Servora.Api.Features.Settings;
 using Servora.Api.Features.ServiceTemplates;
@@ -686,6 +687,8 @@ public static class ServiceTicketEndpoints
         AppDbContext context,
         IShopContext shopContext,
         IActivityLogger activityLogger,
+        NotificationDispatcherService notificationDispatcher,
+        IConfiguration configuration,
         ClaimsPrincipal principal,
         CancellationToken cancellationToken)
     {
@@ -950,6 +953,25 @@ public static class ServiceTicketEndpoints
             await context.SaveChangesAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
+
+        var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+        var trackUrl = ticket.PublicTrackingEnabled
+            ? $"{frontendBaseUrl}/track/{ticket.PublicTrackingToken}"
+            : $"{frontendBaseUrl}/app/tickets/{ticket.Id}";
+        await notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+            ShopId: shopId,
+            EventType: NotificationEventType.TicketCreated,
+            Title: $"Service Ticket {ticket.TicketNumber} created",
+            Message: $"Your service ticket {ticket.TicketNumber} ({ticket.DeviceSnapshot}) has been registered.",
+            DeepLinkUrl: trackUrl,
+            CustomerName: customer.FullName,
+            CustomerEmail: customer.Email,
+            CustomerPhone: customer.PhoneNumber,
+            ReferenceEntityType: EntityType,
+            ReferenceEntityId: ticket.Id,
+            Data: new { ticketId = ticket.Id, ticketNumber = ticket.TicketNumber, device = ticket.DeviceSnapshot, trackingToken = ticket.PublicTrackingToken }),
+            cancellationToken);
+
         return Results.Created($"/api/v1/service-tickets/{ticket.Id}", new TicketCreatedDto(ticket.Id, ticket.TicketNumber, ticket.PublicTrackingToken));
     }
 
@@ -1742,6 +1764,7 @@ public static class ServiceTicketEndpoints
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
         if (ticket.Status.IsFinal || ticket.Status.IsCancelled) return Results.BadRequest("Final or cancelled tickets cannot be edited.");
@@ -1819,10 +1842,22 @@ public static class ServiceTicketEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> ChangeStatusAsync(int id, [FromBody] ChangeStatusRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    private static async Task<IResult> ChangeStatusAsync(
+        int id,
+        [FromBody] ChangeStatusRequest request,
+        AppDbContext context,
+        IShopContext shopContext,
+        IActivityLogger activityLogger,
+        NotificationDispatcherService notificationDispatcher,
+        IConfiguration configuration,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken)
     {
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
-        var ticket = await context.ServiceTickets.Include(item => item.Status).FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
+        var ticket = await context.ServiceTickets
+            .Include(item => item.Status)
+            .Include(item => item.Customer)
+            .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
 
         var toStatus = await context.ServiceStatuses.FirstOrDefaultAsync(status => status.Id == request.StatusId && status.ShopId == shopId, cancellationToken);
@@ -1916,6 +1951,25 @@ public static class ServiceTicketEndpoints
         await context.SaveChangesAsync(cancellationToken);
         await AddHistoryAsync(context, principal, shopId, ticket.Id, TicketHistoryEventType.StatusChanged, fromStatusId, toStatus.Id, request.Reason, isPublicVisible: true, cancellationToken: cancellationToken);
         await activityLogger.LogAsync(EntityType, ticket.Id, "TicketStatusChanged", $"Ticket {ticket.TicketNumber} moved to {toStatus.Name}", request.Reason, cancellationToken: cancellationToken);
+
+        var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+        var trackUrl = ticket.PublicTrackingEnabled
+            ? $"{frontendBaseUrl}/track/{ticket.PublicTrackingToken}"
+            : $"{frontendBaseUrl}/app/tickets/{ticket.Id}";
+        await notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+            ShopId: shopId,
+            EventType: NotificationEventType.TicketStatusChanged,
+            Title: $"Ticket {ticket.TicketNumber} status updated to {toStatus.Name}",
+            Message: $"Your service ticket {ticket.TicketNumber} ({ticket.DeviceSnapshot}) is now in status \"{toStatus.Name}\".",
+            DeepLinkUrl: trackUrl,
+            CustomerName: ticket.Customer?.FullName,
+            CustomerEmail: ticket.Customer?.Email,
+            CustomerPhone: ticket.Customer?.PhoneNumber,
+            ReferenceEntityType: EntityType,
+            ReferenceEntityId: ticket.Id,
+            Data: new { ticketId = ticket.Id, ticketNumber = ticket.TicketNumber, fromStatusId, toStatusId = toStatus.Id, statusName = toStatus.Name }),
+            cancellationToken);
+
         return Results.NoContent();
     }
 
@@ -1971,7 +2025,16 @@ public static class ServiceTicketEndpoints
         return Results.Ok(approvals);
     }
 
-    private static async Task<IResult> CreateApprovalAsync(int id, [FromBody] CreateApprovalRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    private static async Task<IResult> CreateApprovalAsync(
+        int id,
+        [FromBody] CreateApprovalRequest request,
+        AppDbContext context,
+        IShopContext shopContext,
+        IActivityLogger activityLogger,
+        NotificationDispatcherService notificationDispatcher,
+        IConfiguration configuration,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Description))
         {
@@ -2035,6 +2098,7 @@ public static class ServiceTicketEndpoints
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
         if (ticket.Status.IsFinal || ticket.Status.IsCancelled)
@@ -2098,20 +2162,43 @@ public static class ServiceTicketEndpoints
         await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.ApprovalRequested, note: historyNote, cancellationToken: cancellationToken);
         await activityLogger.LogAsync(EntityType, id, "TicketApprovalRequested", $"Approval requested: {approval.Title}", cancellationToken: cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+        var approvalUrl = ticket.PublicTrackingEnabled
+            ? $"{frontendBaseUrl}/track/{ticket.PublicTrackingToken}"
+            : $"{frontendBaseUrl}/app/tickets/{ticket.Id}";
+        var amountSummary = approval.EstimatedAmount.HasValue
+            ? $" (Estimated: {approval.EstimatedAmount.Value:0.##})"
+            : string.Empty;
+        await notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+            ShopId: shopId,
+            EventType: NotificationEventType.ApprovalRequested,
+            Title: $"Quote approval needed for {ticket.TicketNumber}: {approval.Title}",
+            Message: $"Please review and approve \"{approval.Title}\"{amountSummary} for ticket {ticket.TicketNumber}. {approval.Description}",
+            DeepLinkUrl: approvalUrl,
+            CustomerName: ticket.Customer?.FullName,
+            CustomerEmail: ticket.Customer?.Email,
+            CustomerPhone: ticket.Customer?.PhoneNumber,
+            ReferenceEntityType: EntityType,
+            ReferenceEntityId: ticket.Id,
+            Data: new { ticketId = ticket.Id, ticketNumber = ticket.TicketNumber, approvalId = approval.Id, title = approval.Title, estimatedAmount = approval.EstimatedAmount }),
+            cancellationToken);
+
         return Results.Created($"/api/v1/service-tickets/{id}/approvals/{approval.Id}", new { approval.Id });
     }
 
-    private static Task<IResult> ApproveApprovalAsync(int id, int approvalId, [FromBody] ResolveApprovalRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
-        => ResolveApprovalAsync(id, approvalId, ApprovalStatus.Approved, request, context, shopContext, activityLogger, principal, cancellationToken);
+    private static Task<IResult> ApproveApprovalAsync(int id, int approvalId, [FromBody] ResolveApprovalRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, NotificationDispatcherService notificationDispatcher, IConfiguration configuration, ClaimsPrincipal principal, CancellationToken cancellationToken)
+        => ResolveApprovalAsync(id, approvalId, ApprovalStatus.Approved, request, context, shopContext, activityLogger, notificationDispatcher, configuration, principal, cancellationToken);
 
-    private static Task<IResult> RejectApprovalAsync(int id, int approvalId, [FromBody] ResolveApprovalRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
-        => ResolveApprovalAsync(id, approvalId, ApprovalStatus.Rejected, request, context, shopContext, activityLogger, principal, cancellationToken);
+    private static Task<IResult> RejectApprovalAsync(int id, int approvalId, [FromBody] ResolveApprovalRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, NotificationDispatcherService notificationDispatcher, IConfiguration configuration, ClaimsPrincipal principal, CancellationToken cancellationToken)
+        => ResolveApprovalAsync(id, approvalId, ApprovalStatus.Rejected, request, context, shopContext, activityLogger, notificationDispatcher, configuration, principal, cancellationToken);
 
-    private static async Task<IResult> ResolveApprovalAsync(int id, int approvalId, ApprovalStatus status, ResolveApprovalRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    private static async Task<IResult> ResolveApprovalAsync(int id, int approvalId, ApprovalStatus status, ResolveApprovalRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, NotificationDispatcherService notificationDispatcher, IConfiguration configuration, ClaimsPrincipal principal, CancellationToken cancellationToken)
     {
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
         if (ticket.Status.IsFinal || ticket.Status.IsCancelled)
@@ -2164,6 +2251,22 @@ public static class ServiceTicketEndpoints
         await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.ApprovalResolved, note: $"{approval.Title}: {status}", cancellationToken: cancellationToken);
         await activityLogger.LogAsync(EntityType, id, "TicketApprovalResolved", $"Approval {status}: {approval.Title}", cancellationToken: cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+        await notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+            ShopId: shopId,
+            EventType: NotificationEventType.ApprovalResolved,
+            Title: $"Quote approval {status} on {ticket.TicketNumber}",
+            Message: $"Approval \"{approval.Title}\" on ticket {ticket.TicketNumber} was marked {status}.",
+            DeepLinkUrl: $"{frontendBaseUrl}/app/tickets/{ticket.Id}",
+            CustomerName: ticket.Customer?.FullName,
+            CustomerEmail: ticket.Customer?.Email,
+            CustomerPhone: ticket.Customer?.PhoneNumber,
+            ReferenceEntityType: EntityType,
+            ReferenceEntityId: ticket.Id,
+            Data: new { ticketId = ticket.Id, ticketNumber = ticket.TicketNumber, approvalId = approval.Id, status = status.ToString(), note = approval.ResolutionNote }),
+            cancellationToken);
+
         return Results.NoContent();
     }
 
@@ -2197,6 +2300,7 @@ public static class ServiceTicketEndpoints
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
         if (ticket.Status.IsFinal || ticket.Status.IsCancelled)
@@ -2289,6 +2393,7 @@ public static class ServiceTicketEndpoints
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
         if (ticket.Status.IsFinal || ticket.Status.IsCancelled)
@@ -2354,6 +2459,7 @@ public static class ServiceTicketEndpoints
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
         if (ticket.Status.IsFinal || ticket.Status.IsCancelled)
@@ -2447,6 +2553,7 @@ public static class ServiceTicketEndpoints
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
 
@@ -2542,6 +2649,7 @@ public static class ServiceTicketEndpoints
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
 
@@ -2623,6 +2731,7 @@ public static class ServiceTicketEndpoints
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
         var ticket = await context.ServiceTickets
             .Include(item => item.Status)
+            .Include(item => item.Customer)
             .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
         if (ticket.Status.IsCancelled) return Results.BadRequest("Cannot update billing on a cancelled ticket.");
@@ -2795,7 +2904,16 @@ public static class ServiceTicketEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> PickupOverrideAsync(int id, [FromBody] PickupOverrideRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    private static async Task<IResult> PickupOverrideAsync(
+        int id,
+        [FromBody] PickupOverrideRequest request,
+        AppDbContext context,
+        IShopContext shopContext,
+        IActivityLogger activityLogger,
+        NotificationDispatcherService notificationDispatcher,
+        IConfiguration configuration,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest("Override reason is required.");
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
@@ -2803,13 +2921,29 @@ public static class ServiceTicketEndpoints
         {
             return Results.BadRequest("Unpaid pickup override is disabled for this shop.");
         }
-        var ticket = await context.ServiceTickets.FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
+        var ticket = await context.ServiceTickets
+            .Include(item => item.Customer)
+            .FirstOrDefaultAsync(item => item.Id == id && item.ShopId == shopId && item.DeletedAt == null, cancellationToken);
         if (ticket is null) return Results.NotFound();
 
         ticket.PickupOverrideReason = request.Reason.Trim();
         await context.SaveChangesAsync(cancellationToken);
         await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.PickupOverride, reason: request.Reason.Trim(), cancellationToken: cancellationToken);
         await activityLogger.LogAsync(EntityType, id, "TicketPickupOverride", "Pickup payment block overridden.", request.Reason.Trim(), cancellationToken: cancellationToken);
+
+        var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+        await notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+            ShopId: shopId,
+            EventType: NotificationEventType.TicketPickupOverride,
+            Title: $"Unpaid pickup override on {ticket.TicketNumber}",
+            Message: $"Payment block was overridden for {ticket.TicketNumber}. Reason: {ticket.PickupOverrideReason}",
+            DeepLinkUrl: $"{frontendBaseUrl}/app/tickets/{ticket.Id}",
+            CustomerName: ticket.Customer?.FullName,
+            ReferenceEntityType: EntityType,
+            ReferenceEntityId: ticket.Id,
+            Data: new { ticketId = ticket.Id, ticketNumber = ticket.TicketNumber, reason = ticket.PickupOverrideReason }),
+            cancellationToken);
+
         return Results.NoContent();
     }
 
@@ -2885,7 +3019,7 @@ public static class ServiceTicketEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> GetPublicTrackingAsync(string token, AppDbContext context, CancellationToken cancellationToken)
+    private static async Task<IResult> GetPublicTrackingAsync(string token, AppDbContext context, NotificationDispatcherService notificationDispatcher, CancellationToken cancellationToken)
     {
         var ticket = await context.ServiceTickets.AsNoTracking()
             .Where(item => item.PublicTrackingEnabled && item.PublicTrackingToken == token && item.DeletedAt == null)
@@ -2903,6 +3037,8 @@ public static class ServiceTicketEndpoints
                 item.DeviceId,
                 item.TicketNumber,
                 item.DeviceSnapshot,
+                CustomerEmail = item.Customer.Email,
+                CustomerPhone = item.Customer.PhoneNumber,
                 ServiceLocationType = item.ServiceLocationType.ToString(),
                 item.SiteAddressSnapshot,
                 item.ScheduledVisitStart,
@@ -2993,6 +3129,16 @@ public static class ServiceTicketEndpoints
             activePaymentExpiresAt = pendingIntent?.ExpiresAt;
         }
 
+        var pendingApprovalCount = await context.ApprovalRequests.AsNoTracking()
+            .CountAsync(a => a.ShopId == ticket.ShopId && a.ServiceTicketId == ticket.Id && a.Status == ApprovalStatus.Pending, cancellationToken);
+        var notificationChannel = await context.WorkspaceNotificationChannels.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.ShopId == ticket.ShopId, cancellationToken);
+        var (quoteApprovalRequiresOtp, quoteApprovalOtpChannels) = PublicQuoteApprovalEndpoints.EvaluateQuoteOtpOptions(
+            notificationChannel,
+            notificationDispatcher.IsSystemSmtpConfigured(),
+            ticket.CustomerEmail,
+            ticket.CustomerPhone);
+
         return Results.Ok(new
         {
             ticket.ShopName,
@@ -3022,7 +3168,10 @@ public static class ServiceTicketEndpoints
             RemainingBalance = remainingBalance,
             CurrencyCode = currencyCode,
             ActivePaymentUrl = activePaymentUrl,
-            ActivePaymentExpiresAt = activePaymentExpiresAt
+            ActivePaymentExpiresAt = activePaymentExpiresAt,
+            PendingApprovalCount = pendingApprovalCount,
+            QuoteApprovalRequiresOtp = quoteApprovalRequiresOtp,
+            QuoteApprovalOtpChannels = quoteApprovalOtpChannels
         });
     }
 

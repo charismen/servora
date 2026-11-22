@@ -72,6 +72,7 @@ export interface ShopUser {
 	roles: ShopRole[];
 	employmentType: EmploymentType;
 	freelanceProfile?: FreelanceProfile | null;
+	twoFactorEnabled?: boolean;
 }
 
 export interface ShopUserPage {

@@ -57,7 +57,9 @@ public static class CurrentUser
         OrganizationContextDto? Organization,
         IReadOnlyCollection<WorkspaceSummaryDto> AccessibleWorkspaces,
         IReadOnlyCollection<string> Roles,
-        IReadOnlyCollection<string> Permissions);
+        IReadOnlyCollection<string> Permissions,
+        bool TwoFactorEnabled = false,
+        bool RequiresTwoFactorSetup = false);
 
     public sealed record SwitchWorkspaceRequest(int WorkspaceId);
 
@@ -145,7 +147,9 @@ public static class CurrentUser
                 new OrganizationContextDto(defaultShop.OrganizationId, defaultShop.Organization.Name, defaultShop.Organization.Slug, defaultShop.Organization.LogoUrl, null),
                 [],
                 [],
-                []);
+                [],
+                TwoFactorEnabled: user.TwoFactorEnabled,
+                RequiresTwoFactorSetup: false);
         }
 
         var orgMembership = await context.OrganizationUsers
@@ -192,6 +196,9 @@ public static class CurrentUser
             activeMembership.OrganizationLogoUrl,
             orgMembership?.ToString());
 
+        var requiresTwoFactorSetup = !user.TwoFactorEnabled
+            && await TwoFactorAuthEndpoints.IsTwoFactorRequiredForUserAsync(user, context, cancellationToken);
+
         return new UserProfile(
             user.Id,
             user.Email ?? string.Empty,
@@ -201,7 +208,9 @@ public static class CurrentUser
             orgDto,
             accessibleWorkspaces,
             userRoles.Select(role => role.RoleName).OrderBy(role => role).ToArray(),
-            permissions);
+            permissions,
+            TwoFactorEnabled: user.TwoFactorEnabled,
+            RequiresTwoFactorSetup: requiresTwoFactorSetup);
     }
 
     public static void MapEndpoint(IEndpointRouteBuilder app)

@@ -69,6 +69,7 @@
 	let addUserModalOpen = $state(false);
 	let addUserSubmitting = $state(false);
 	let newShowPassword = $state(false);
+	let newSendInviteEmail = $state(false);
 	let newEmploymentType = $state<string>('FullTime');
 
 	let editingStaffUser = $state<ShopUser | null>(null);
@@ -844,6 +845,19 @@
 													<span>{user.status === 'Active' ? t('settings.deactivate') : t('settings.reactivate')}</span>
 												</button>
 											</form>
+											{#if user.twoFactorEnabled}
+												<form method="POST" action="?/reset2fa" class="inline-block" use:enhance>
+													<input type="hidden" name="userId" value={user.userId} />
+													<button
+														type="submit"
+														class="inline-flex h-8 items-center gap-1 rounded-button border border-amber-300 bg-amber-50 px-2.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 transition-colors cursor-pointer"
+														title={t('usersRoles.resetTwoFactorTooltip')}
+													>
+														<span class="material-symbols-outlined text-[14px]">lock_reset</span>
+														<span>{t('usersRoles.resetTwoFactor')}</span>
+													</button>
+												</form>
+											{/if}
 										</div>
 									</td>
 								{/if}
@@ -1134,15 +1148,17 @@
 						/>
 					</label>
 					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('auth.password')} *</span>
+						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">
+							{t('auth.password')} {newSendInviteEmail ? `(${t('common.optional')})` : '*'}
+						</span>
 						<div class="relative flex items-center">
 							<input
 								name="password"
 								type={newShowPassword ? 'text' : 'password'}
-								required
-								minlength="6"
+								required={!newSendInviteEmail}
+								minlength={newSendInviteEmail ? undefined : 6}
 								class="w-full rounded-input border border-stone bg-white p-2 pr-9 text-body-sm text-ink focus:border-ink focus:outline-none"
-								placeholder="••••••••"
+								placeholder={newSendInviteEmail ? t('usersRoles.invitePasswordPlaceholder') : '••••••••'}
 							/>
 							<button
 								type="button"
@@ -1155,6 +1171,18 @@
 								</span>
 							</button>
 						</div>
+					</label>
+					<label class="sm:col-span-2 flex items-start gap-2.5 rounded-xl border border-stone bg-ash/40 p-3 cursor-pointer">
+						<input
+							type="checkbox"
+							name="sendInviteEmail"
+							bind:checked={newSendInviteEmail}
+							class="mt-0.5 w-4 h-4 accent-ink"
+						/>
+						<span class="text-xs text-secondary">
+							<strong class="block text-ink font-semibold">{t('usersRoles.sendInviteEmail')}</strong>
+							{t('usersRoles.sendInviteEmailHint')}
+						</span>
 					</label>
 					<div class="space-y-1 block sm:col-span-2">
 						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.contractType')}</span>

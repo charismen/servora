@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Security.Claims;
 using System.Text;
 using Servora.Api.Features.Identity.Permissions;
+using Servora.Api.Features.Notifications;
 using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Features.Settings;
 using Servora.Api.Features.Shops;
@@ -484,7 +485,15 @@ public static class InventoryEndpoints
         }
     }
 
-    private static async Task<IResult> AdjustStockAsync(int id, [FromBody] AdjustStockRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, CancellationToken cancellationToken)
+    private static async Task<IResult> AdjustStockAsync(
+        int id,
+        [FromBody] AdjustStockRequest request,
+        AppDbContext context,
+        IShopContext shopContext,
+        IActivityLogger activityLogger,
+        NotificationDispatcherService notificationDispatcher,
+        IConfiguration configuration,
+        CancellationToken cancellationToken)
     {
         if (request.QuantityDelta == 0) return Results.BadRequest("Quantity delta cannot be zero.");
         if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest("Reason is required.");
@@ -503,6 +512,23 @@ public static class InventoryEndpoints
             await context.SaveChangesAsync(cancellationToken);
             await activityLogger.LogAsync("InventoryItem", item.Id, "InventoryAdjusted", $"Inventory adjusted: {item.Name}", request.Reason, cancellationToken: cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+
+            var available = Available(item);
+            if (request.QuantityDelta < 0 && item.ReorderLevel > 0 && available <= item.ReorderLevel)
+            {
+                var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+                await notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+                    ShopId: shopId,
+                    EventType: NotificationEventType.InventoryLowStock,
+                    Title: $"Low stock alert: {item.Name} ({item.Sku})",
+                    Message: $"{item.Name} ({item.Sku}) has {available:0.##} {item.Unit} available (reorder level: {item.ReorderLevel:0.##} {item.Unit}).",
+                    DeepLinkUrl: $"{frontendBaseUrl}/app/inventory/{item.Id}",
+                    ReferenceEntityType: "InventoryItem",
+                    ReferenceEntityId: item.Id,
+                    Data: new { itemId = item.Id, sku = item.Sku, name = item.Name, available, reorderLevel = item.ReorderLevel }),
+                    cancellationToken);
+            }
+
             return Results.NoContent();
         }
         catch (DbUpdateConcurrencyException)
@@ -586,19 +612,19 @@ public static class InventoryEndpoints
         }
     }
 
-    private static async Task<IResult> ConsumeForTicketAsync(int ticketId, int usageId, [FromBody] QuantityRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    private static async Task<IResult> ConsumeForTicketAsync(int ticketId, int usageId, [FromBody] QuantityRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, NotificationDispatcherService notificationDispatcher, IConfiguration configuration, ClaimsPrincipal principal, CancellationToken cancellationToken)
     {
-        return await ApplyUsageActionAsync(ticketId, usageId, request, InventoryMovementType.Consume, context, shopContext, activityLogger, principal, cancellationToken);
+        return await ApplyUsageActionAsync(ticketId, usageId, request, InventoryMovementType.Consume, context, shopContext, activityLogger, notificationDispatcher, configuration, principal, cancellationToken);
     }
 
-    private static async Task<IResult> ReleaseForTicketAsync(int ticketId, int usageId, [FromBody] QuantityRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    private static async Task<IResult> ReleaseForTicketAsync(int ticketId, int usageId, [FromBody] QuantityRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, NotificationDispatcherService notificationDispatcher, IConfiguration configuration, ClaimsPrincipal principal, CancellationToken cancellationToken)
     {
-        return await ApplyUsageActionAsync(ticketId, usageId, request, InventoryMovementType.Release, context, shopContext, activityLogger, principal, cancellationToken);
+        return await ApplyUsageActionAsync(ticketId, usageId, request, InventoryMovementType.Release, context, shopContext, activityLogger, notificationDispatcher, configuration, principal, cancellationToken);
     }
 
-    private static async Task<IResult> ReturnForTicketAsync(int ticketId, int usageId, [FromBody] QuantityRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    private static async Task<IResult> ReturnForTicketAsync(int ticketId, int usageId, [FromBody] QuantityRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, NotificationDispatcherService notificationDispatcher, IConfiguration configuration, ClaimsPrincipal principal, CancellationToken cancellationToken)
     {
-        return await ApplyUsageActionAsync(ticketId, usageId, request, InventoryMovementType.Return, context, shopContext, activityLogger, principal, cancellationToken);
+        return await ApplyUsageActionAsync(ticketId, usageId, request, InventoryMovementType.Return, context, shopContext, activityLogger, notificationDispatcher, configuration, principal, cancellationToken);
     }
 
     public static async Task ReleaseOpenReservationsForTicketAsync(AppDbContext context, IActivityLogger activityLogger, int shopId, int ticketId, CancellationToken cancellationToken)
@@ -628,6 +654,8 @@ public static class InventoryEndpoints
         AppDbContext context,
         IShopContext shopContext,
         IActivityLogger activityLogger,
+        NotificationDispatcherService notificationDispatcher,
+        IConfiguration configuration,
         ClaimsPrincipal principal,
         CancellationToken cancellationToken)
     {
@@ -699,6 +727,23 @@ public static class InventoryEndpoints
 
             await activityLogger.LogAsync("ServiceTicket", ticketId, $"Inventory{type}", $"{type} {quantity} {usage.InventoryItem.Unit} {usage.InventoryItem.Name}", request.Reason, cancellationToken: cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+
+            var availableAfter = Available(usage.InventoryItem);
+            if (type == InventoryMovementType.Consume && usage.InventoryItem.ReorderLevel > 0 && availableAfter <= usage.InventoryItem.ReorderLevel)
+            {
+                var frontendBaseUrl = (configuration["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+                await notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+                    ShopId: shopId,
+                    EventType: NotificationEventType.InventoryLowStock,
+                    Title: $"Low stock alert: {usage.InventoryItem.Name} ({usage.InventoryItem.Sku})",
+                    Message: $"{usage.InventoryItem.Name} ({usage.InventoryItem.Sku}) has {availableAfter:0.##} {usage.InventoryItem.Unit} available (reorder level: {usage.InventoryItem.ReorderLevel:0.##} {usage.InventoryItem.Unit}).",
+                    DeepLinkUrl: $"{frontendBaseUrl}/app/inventory/{usage.InventoryItem.Id}",
+                    ReferenceEntityType: "InventoryItem",
+                    ReferenceEntityId: usage.InventoryItem.Id,
+                    Data: new { itemId = usage.InventoryItem.Id, sku = usage.InventoryItem.Sku, name = usage.InventoryItem.Name, available = availableAfter, reorderLevel = usage.InventoryItem.ReorderLevel }),
+                    cancellationToken);
+            }
+
             return Results.NoContent();
         }
         catch (DbUpdateConcurrencyException)

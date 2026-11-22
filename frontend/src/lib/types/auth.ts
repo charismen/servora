@@ -83,6 +83,8 @@ export type CurrentUser = {
 	accessibleWorkspaces: WorkspaceSummary[];
 	roles: string[];
 	permissions: string[];
+	twoFactorEnabled?: boolean;
+	requiresTwoFactorSetup?: boolean;
 };
 
 export type LoginResponse = {
@@ -90,3 +92,12 @@ export type LoginResponse = {
 	expiresAt: string;
 	user: CurrentUser;
 };
+
+export type TwoFactorChallengeResponse = {
+	requiresTwoFactor: true;
+	challengeToken: string;
+	method: 'AuthenticatorTotp' | 'EmailOtp' | string;
+	maskedEmail?: string | null;
+};
+
+export type LoginApiResponse = LoginResponse | TwoFactorChallengeResponse;

@@ -273,6 +273,20 @@
 			<span class="material-symbols-outlined text-[17px]">credit_card</span>
 			<span>{t('settings.paymentGateway')}</span>
 		</a>
+		<a
+			href="/app/settings/notifications"
+			class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-caption font-medium whitespace-nowrap transition-all shrink-0 text-secondary hover:text-primary hover:bg-ash cursor-pointer"
+		>
+			<span class="material-symbols-outlined text-[17px]">notifications_active</span>
+			<span>{t('settings.notificationsWebhooks')}</span>
+		</a>
+		<a
+			href="/app/settings/security"
+			class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-caption font-medium whitespace-nowrap transition-all shrink-0 text-secondary hover:text-primary hover:bg-ash cursor-pointer"
+		>
+			<span class="material-symbols-outlined text-[17px]">shield_lock</span>
+			<span>{t('settings.accountSecurity')}</span>
+		</a>
 	</nav>
 
 	<!-- Settings Form Area -->

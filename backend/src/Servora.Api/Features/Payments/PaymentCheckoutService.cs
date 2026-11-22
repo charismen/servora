@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Servora.Api.Features.Activity;
 using Servora.Api.Features.Blueprints;
+using Servora.Api.Features.Notifications;
 using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Features.Shops;
 using Servora.Api.Infrastructure.Data;
@@ -57,17 +58,23 @@ public sealed class PaymentCheckoutService
     private readonly IPaymentGatewayRegistry _gatewayRegistry;
     private readonly ISecretProtector _secretProtector;
     private readonly ILogger<PaymentCheckoutService> _logger;
+    private readonly NotificationDispatcherService? _notificationDispatcher;
+    private readonly IConfiguration? _configuration;
 
     public PaymentCheckoutService(
         AppDbContext context,
         IPaymentGatewayRegistry gatewayRegistry,
         ISecretProtector secretProtector,
-        ILogger<PaymentCheckoutService> logger)
+        ILogger<PaymentCheckoutService> logger,
+        NotificationDispatcherService? notificationDispatcher = null,
+        IConfiguration? configuration = null)
     {
         _context = context;
         _gatewayRegistry = gatewayRegistry;
         _secretProtector = secretProtector;
         _logger = logger;
+        _notificationDispatcher = notificationDispatcher;
+        _configuration = configuration;
     }
 
     public static (bool Allowed, string? Reason) EvaluateWorkspaceEligibility(Shop workspace)
@@ -555,6 +562,7 @@ public sealed class PaymentCheckoutService
 
         var intent = await _context.PaymentCheckoutIntents
             .Include(x => x.ServiceTicket)
+                .ThenInclude(t => t.Customer)
             .FirstOrDefaultAsync(x => x.Id == intentId && x.ShopId == shopId, cancellationToken);
 
         if (intent is null)
@@ -667,6 +675,28 @@ public sealed class PaymentCheckoutService
 
             await _context.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
+
+            if (_notificationDispatcher is not null)
+            {
+                var frontendBaseUrl = (_configuration?["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+                var trackUrl = intent.ServiceTicket.PublicTrackingEnabled
+                    ? $"{frontendBaseUrl}/track/{intent.ServiceTicket.PublicTrackingToken}"
+                    : $"{frontendBaseUrl}/app/tickets/{intent.ServiceTicketId}";
+                await _notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+                    ShopId: shopId,
+                    EventType: NotificationEventType.PaymentSettled,
+                    Title: $"Payment received for {intent.ServiceTicket.TicketNumber}",
+                    Message: $"Online payment of {intent.Amount:0.##} {intent.CurrencyCode} via {methodLabel} has been settled for ticket {intent.ServiceTicket.TicketNumber}.",
+                    DeepLinkUrl: trackUrl,
+                    CustomerName: intent.ServiceTicket.Customer?.FullName,
+                    CustomerEmail: intent.ServiceTicket.Customer?.Email,
+                    CustomerPhone: intent.ServiceTicket.Customer?.PhoneNumber,
+                    ReferenceEntityType: "ServiceTicket",
+                    ReferenceEntityId: intent.ServiceTicketId,
+                    Data: new { ticketId = intent.ServiceTicketId, ticketNumber = intent.ServiceTicket.TicketNumber, amount = intent.Amount, currencyCode = intent.CurrencyCode, provider = intent.Provider.ToString() }),
+                    cancellationToken);
+            }
+
             return true;
         }
 

@@ -1410,6 +1410,14 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.Property<bool>("PhoneNumberConfirmed")
                         .HasColumnType("tinyint(1)");
 
+                    b.Property<string>("PreferredTwoFactorMethod")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("None")
+                        .HasColumnName("preferred_two_factor_method");
+
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("longtext");
 
@@ -2104,6 +2112,112 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.ToTable("maintenance_schedules", (string)null);
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Notifications.NotificationDelivery", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("AttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempt_count");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("channel");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(1000)")
+                        .HasColumnName("error_message");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("varchar(60)")
+                        .HasColumnName("event_type");
+
+                    b.Property<int?>("HttpStatusCode")
+                        .HasColumnType("int")
+                        .HasColumnName("http_status_code");
+
+                    b.Property<string>("PayloadPreview")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("payload_preview");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("varchar(40)")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("RawPayloadJson")
+                        .HasColumnType("text")
+                        .HasColumnName("raw_payload_json");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("varchar(250)")
+                        .HasColumnName("recipient");
+
+                    b.Property<int?>("ReferenceEntityId")
+                        .HasColumnType("int")
+                        .HasColumnName("reference_entity_id");
+
+                    b.Property<string>("ReferenceEntityType")
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("reference_entity_type");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("sent_at");
+
+                    b.Property<int?>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("Pending")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Subject")
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("subject");
+
+                    b.Property<int?>("WebhookEndpointId")
+                        .HasColumnType("int")
+                        .HasColumnName("webhook_endpoint_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WebhookEndpointId");
+
+                    b.HasIndex("ShopId", "CreatedAt");
+
+                    b.HasIndex("Status", "CreatedAt");
+
+                    b.ToTable("notification_deliveries", (string)null);
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Notifications.NotificationTemplate", b =>
                 {
                     b.Property<int>("Id")
@@ -2163,6 +2277,411 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.HasIndex("ShopId", "Channel", "Locale", "Key");
 
                     b.ToTable("notification_templates", (string)null);
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Notifications.OtpVerificationChallenge", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("AttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempt_count");
+
+                    b.Property<string>("ChallengeToken")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("challenge_token");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("channel");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)")
+                        .HasColumnName("code_hash");
+
+                    b.Property<string>("CodeSalt")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("code_salt");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("consumed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("MaskedDestination")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("varchar(120)")
+                        .HasColumnName("masked_destination");
+
+                    b.Property<int>("MaxAttempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(5)
+                        .HasColumnName("max_attempts");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("varchar(40)")
+                        .HasColumnName("purpose");
+
+                    b.Property<int?>("ServiceTicketId")
+                        .HasColumnType("int")
+                        .HasColumnName("service_ticket_id");
+
+                    b.Property<int?>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("int")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChallengeToken")
+                        .IsUnique();
+
+                    b.HasIndex("ServiceTicketId");
+
+                    b.HasIndex("ShopId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Purpose", "ServiceTicketId", "CreatedAt");
+
+                    b.HasIndex("Purpose", "UserId", "CreatedAt");
+
+                    b.ToTable("otp_verification_challenges", (string)null);
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Notifications.WorkspaceNotificationChannel", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("EmailEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("email_enabled");
+
+                    b.Property<string>("FromEmail")
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("from_email");
+
+                    b.Property<string>("FromName")
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("from_name");
+
+                    b.Property<bool>("RequireOtpForPublicQuoteApproval")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("require_otp_for_public_quote_approval");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<string>("SmtpHost")
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("smtp_host");
+
+                    b.Property<string>("SmtpPasswordEncrypted")
+                        .HasColumnType("text")
+                        .HasColumnName("smtp_password_encrypted");
+
+                    b.Property<string>("SmtpPasswordLast4")
+                        .HasMaxLength(8)
+                        .HasColumnType("varchar(8)")
+                        .HasColumnName("smtp_password_last4");
+
+                    b.Property<int>("SmtpPort")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(587)
+                        .HasColumnName("smtp_port");
+
+                    b.Property<bool>("SmtpUseSsl")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(true)
+                        .HasColumnName("smtp_use_ssl");
+
+                    b.Property<string>("SmtpUsername")
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("smtp_username");
+
+                    b.Property<string>("StaffNotificationEmails")
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(1000)")
+                        .HasColumnName("staff_notification_emails");
+
+                    b.Property<string>("TelegramBotTokenEncrypted")
+                        .HasColumnType("text")
+                        .HasColumnName("telegram_bot_token_encrypted");
+
+                    b.Property<string>("TelegramBotTokenLast4")
+                        .HasMaxLength(8)
+                        .HasColumnType("varchar(8)")
+                        .HasColumnName("telegram_bot_token_last4");
+
+                    b.Property<string>("TelegramChatId")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("telegram_chat_id");
+
+                    b.Property<bool>("TelegramEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("telegram_enabled");
+
+                    b.Property<int?>("TelegramThreadId")
+                        .HasColumnType("int")
+                        .HasColumnName("telegram_thread_id");
+
+                    b.Property<string>("TwoFactorEnforcement")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("Optional")
+                        .HasColumnName("two_factor_enforcement");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.Property<bool>("UseSystemSmtp")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(true)
+                        .HasColumnName("use_system_smtp");
+
+                    b.Property<string>("WhatsAppApiTokenEncrypted")
+                        .HasColumnType("text")
+                        .HasColumnName("whatsapp_api_token_encrypted");
+
+                    b.Property<string>("WhatsAppApiTokenLast4")
+                        .HasMaxLength(8)
+                        .HasColumnType("varchar(8)")
+                        .HasColumnName("whatsapp_api_token_last4");
+
+                    b.Property<string>("WhatsAppApiUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("whatsapp_api_url");
+
+                    b.Property<string>("WhatsAppAuthHeaderName")
+                        .HasMaxLength(80)
+                        .HasColumnType("varchar(80)")
+                        .HasColumnName("whatsapp_auth_header_name");
+
+                    b.Property<string>("WhatsAppCustomPayloadTemplate")
+                        .HasColumnType("text")
+                        .HasColumnName("whatsapp_custom_payload_template");
+
+                    b.Property<bool>("WhatsAppEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("whatsapp_enabled");
+
+                    b.Property<string>("WhatsAppPhoneNumberId")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("whatsapp_phone_number_id");
+
+                    b.Property<string>("WhatsAppProvider")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("Manual")
+                        .HasColumnName("whatsapp_provider");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShopId")
+                        .IsUnique();
+
+                    b.ToTable("workspace_notification_channels", (string)null);
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Notifications.WorkspaceNotificationRule", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("event_type");
+
+                    b.Property<bool>("SendCustomerEmail")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("send_customer_email");
+
+                    b.Property<bool>("SendCustomerWhatsApp")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("send_customer_whatsapp");
+
+                    b.Property<bool>("SendStaffEmail")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("send_staff_email");
+
+                    b.Property<bool>("SendStaffTelegram")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("send_staff_telegram");
+
+                    b.Property<bool>("SendWebhook")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(true)
+                        .HasColumnName("send_webhook");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShopId", "EventType")
+                        .IsUnique();
+
+                    b.ToTable("workspace_notification_rules", (string)null);
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Notifications.WorkspaceWebhookEndpoint", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CustomHeadersJson")
+                        .HasColumnType("text")
+                        .HasColumnName("custom_headers_json");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<int?>("LastStatusCode")
+                        .HasColumnType("int")
+                        .HasColumnName("last_status_code");
+
+                    b.Property<DateTimeOffset?>("LastTriggeredAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("last_triggered_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("varchar(120)")
+                        .HasColumnName("name");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<string>("SigningSecretEncrypted")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("signing_secret_encrypted");
+
+                    b.Property<string>("SigningSecretLast4")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("varchar(8)")
+                        .HasColumnName("signing_secret_last4");
+
+                    b.Property<string>("SubscribedEventsJson")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("subscribed_events_json");
+
+                    b.Property<string>("TargetUrl")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(1000)")
+                        .HasColumnName("target_url");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShopId", "IsActive");
+
+                    b.ToTable("workspace_webhook_endpoints", (string)null);
                 });
 
             modelBuilder.Entity("Servora.Api.Features.Organizations.Organization", b =>
@@ -4433,7 +4952,81 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.Navigation("Shop");
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Notifications.NotificationDelivery", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Servora.Api.Features.Notifications.WorkspaceWebhookEndpoint", "WebhookEndpoint")
+                        .WithMany()
+                        .HasForeignKey("WebhookEndpointId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Shop");
+
+                    b.Navigation("WebhookEndpoint");
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Notifications.NotificationTemplate", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Shop");
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Notifications.OtpVerificationChallenge", b =>
+                {
+                    b.HasOne("Servora.Api.Features.ServiceTickets.ServiceTicket", "ServiceTicket")
+                        .WithMany()
+                        .HasForeignKey("ServiceTicketId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Servora.Api.Features.Identity.Users.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("ServiceTicket");
+
+                    b.Navigation("Shop");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Notifications.WorkspaceNotificationChannel", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Shop");
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Notifications.WorkspaceNotificationRule", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Shop");
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Notifications.WorkspaceWebhookEndpoint", b =>
                 {
                     b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
                         .WithMany()

@@ -29,6 +29,7 @@ using Servora.Api.Infrastructure.Security;
 using FluentValidation;
 using Hangfire;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -97,7 +98,9 @@ builder.Services.AddIdentityCore<Servora.Api.Features.Identity.Users.Application
     options.Password.RequireLowercase = false;
 })
     .AddRoles<Servora.Api.Features.Identity.Roles.ApplicationRole>()
-    .AddEntityFrameworkStores<AppDbContext>();
+    .AddEntityFrameworkStores<AppDbContext>()
+    .AddUserStore<Servora.Api.Features.Identity.Users.ServoraUserStore>()
+    .AddDefaultTokenProviders();
 
 builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider, Servora.Api.Infrastructure.Auth.PermissionPolicyProvider>();
 builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, Servora.Api.Infrastructure.Auth.PermissionAuthorizationHandler>();
@@ -204,6 +207,18 @@ builder.Services.AddHttpClient(StripeGatewayAdapter.HttpClientName, client =>
     client.BaseAddress = new Uri("https://api.stripe.com/");
     client.Timeout = TimeSpan.FromSeconds(20);
 });
+builder.Services.AddHttpClient(HttpWhatsAppSender.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddHttpClient(HttpTelegramSender.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddHttpClient(HttpWebhookSender.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 
 builder.Services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
 builder.Services.AddScoped<IPaymentGateway, XenditGatewayAdapter>();
@@ -212,6 +227,13 @@ builder.Services.AddScoped<IPaymentGatewayRegistry, PaymentGatewayRegistry>();
 builder.Services.AddScoped<PaymentCheckoutService>();
 builder.Services.AddScoped<PaymentIntentExpiryJob>();
 builder.Services.AddScoped<DispatchSchedulingService>();
+builder.Services.AddScoped<IEmailSender, MailKitEmailSender>();
+builder.Services.AddScoped<IWhatsAppSender, HttpWhatsAppSender>();
+builder.Services.AddScoped<ITelegramSender, HttpTelegramSender>();
+builder.Services.AddScoped<IWebhookSender, HttpWebhookSender>();
+builder.Services.AddScoped<OtpChallengeService>();
+builder.Services.AddScoped<NotificationDispatcherService>();
+builder.Services.AddScoped<NotificationDeliveryJob>();
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -319,6 +341,8 @@ var versionedGroup = app.MapGroup("/api/v{version:apiVersion}")
 
 Login.MapEndpoint(versionedGroup);
 CurrentUser.MapEndpoint(versionedGroup);
+AccountAuthEndpoints.MapEndpoint(versionedGroup);
+TwoFactorAuthEndpoints.MapEndpoint(versionedGroup);
 OrganizationWorkspaceEndpoints.MapEndpoint(versionedGroup);
 BlueprintEndpoints.MapEndpoint(versionedGroup);
 GetShopProfileSettings.MapEndpoint(versionedGroup);
@@ -344,6 +368,8 @@ ServiceTemplateEndpoints.MapEndpoint(versionedGroup);
 MaintenanceScheduleEndpoints.MapEndpoint(versionedGroup);
 DispatchEndpoints.MapEndpoint(versionedGroup);
 NotificationTemplateEndpoints.MapEndpoint(versionedGroup);
+NotificationChannelEndpoints.MapEndpoint(versionedGroup);
+PublicQuoteApprovalEndpoints.MapEndpoint(versionedGroup);
 InventoryEndpoints.MapEndpoint(versionedGroup);
 InventoryImportEndpoints.MapEndpoint(versionedGroup);
 ActivityEndpoints.MapEndpoint(versionedGroup);

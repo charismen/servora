@@ -25,8 +25,10 @@ public enum NotificationChannel
 {
     WhatsApp,
     Email,
+    Telegram,
     Sms,
-    InApp
+    InApp,
+    Webhook
 }
 
 public class NotificationTemplateConfiguration : IEntityTypeConfiguration<NotificationTemplate>

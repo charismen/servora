@@ -44,7 +44,8 @@ Built-in selectable blueprints with full **English (`en`)** and **Bahasa Indones
 - Parts Inventory & Stock Movements (reservations, CSV/bulk import, valuation)
 - Internal Workshop / Division Equipment Assets (`workspace_assets`, custody & depreciation)
 - Staff Attendance & Full-Time / Freelance Technician Payroll
-- Reports, Activity Logs, Printable Receipts & Token-Gated Public Tracking Portal (`/track/[token]`)
+- Reports, Activity Logs, Printable Receipts & Token-Gated Public Tracking Portal (`/track/[token]`) with self-service Quote Approval and optional 6-digit OTP verification
+- Multi-Channel Notifications (SMTP Email, WhatsApp via Meta Cloud / Fonnte / WAHA / Custom HTTP, Telegram Bot API, HMAC-SHA256 Signed Outbound Webhooks), Account Auth Emails (Forgot Password, Staff Invite, optional Public Registration), and Staff Login 2FA (Authenticator TOTP + Email OTP + 8 recovery codes)
 
 ---
 

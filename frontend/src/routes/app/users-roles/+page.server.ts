@@ -139,6 +139,8 @@ export const actions: Actions = {
 		const firstName = String(form.get('firstName') ?? '');
 		const lastName = String(form.get('lastName') ?? '');
 		const employmentType = String(form.get('employmentType') ?? 'FullTime');
+		const sendInviteEmail = form.get('sendInviteEmail') === 'on';
+		const rawPassword = String(form.get('password') ?? '').trim();
 		const roleIds = form.getAll('roleIds').map(Number).filter(Boolean);
 
 		try {
@@ -147,14 +149,15 @@ export const actions: Actions = {
 				token,
 				body: {
 					email,
-					password: String(form.get('password') ?? ''),
+					password: rawPassword || null,
 					firstName,
 					lastName,
 					roleIds,
-					employmentType
+					employmentType,
+					sendInviteEmail
 				}
 			});
-			return { success: true, messageKey: 'settings.userSaved' };
+			return { success: true, messageKey: sendInviteEmail ? 'settings.userInvited' : 'settings.userSaved' };
 		} catch (error) {
 			if (error instanceof ServerApiError) {
 				return fail(error.status, {
@@ -298,6 +301,11 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const action = String(form.get('status') ?? '') === 'Active' ? 'deactivate' : 'reactivate';
 		return save(fetch, `/shop-users/${form.get('userId')}/${action}`, 'POST', token, {}, 'settings.userStatusUpdated');
+	},
+	reset2fa: async ({ request, cookies, fetch }) => {
+		const token = cookies.get('servora_session');
+		const form = await request.formData();
+		return save(fetch, `/shop-users/${form.get('userId')}/reset-2fa`, 'POST', token, {}, 'usersRoles.twoFactorResetSuccess');
 	},
 	saveRole: async ({ request, cookies, fetch }) => {
 		const token = cookies.get('servora_session');

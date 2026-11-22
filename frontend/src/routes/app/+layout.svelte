@@ -470,6 +470,14 @@
 					</div>
 				</div>
 				<div class="space-y-xs">
+					<a
+						href="/app/settings/security"
+						class="flex items-center gap-sm px-md py-sm rounded-lg text-body-sm transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claytile/45 {$page.url.pathname.startsWith('/app/settings/security') ? 'bg-ash font-semibold text-ink' : 'text-secondary hover:bg-ash/60 hover:text-primary'}"
+						onclick={() => { profileOpen = false; mobileOpen = false; }}
+					>
+						<span class="material-symbols-outlined text-[18px]">shield_lock</span>
+						<span>{t('settings.accountSecurity')}</span>
+					</a>
 					{#if can(data.user.permissions, permissions.settingsRead)}
 						<a
 							href="/app/users-roles"
@@ -674,6 +682,23 @@
 <main class="ml-0 {sidebarOpen ? 'lg:ml-[248px]' : 'lg:ml-[80px]'} mt-16 min-w-0 flex flex-col transition-[margin-left] duration-200 ease-in-out" style="min-height: calc(100vh - 64px);">
 	<!-- View Content -->
 	<div class="flex-1 min-w-0 overflow-y-auto p-md lg:p-xl bg-background text-on-surface font-body-base" style="font-size: 16px; line-height: 1.5; letter-spacing: -0.24px;">
+		{#if data.user.requiresTwoFactorSetup && !$page.url.pathname.startsWith('/app/settings/security')}
+			<div class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
+				<div class="flex items-start gap-2.5">
+					<span class="material-symbols-outlined text-[20px] text-amber-700 mt-0.5 shrink-0">shield_lock</span>
+					<div>
+						<div class="font-semibold text-amber-950">{t('security.policyBannerTitle')}</div>
+						<div class="text-xs text-amber-900">{t('security.policyBannerBody')}</div>
+					</div>
+				</div>
+				<a
+					href="/app/settings/security"
+					class="rounded-lg bg-amber-800 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-900"
+				>
+					{t('security.policyBannerCta')}
+				</a>
+			</div>
+		{/if}
 		{#if data.user.workspace && !data.user.workspace.setupCompleted && !$page.url.pathname.startsWith('/app/onboarding') && can(data.user.permissions, permissions.settingsWrite)}
 			<div class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-claytile/30 bg-claytile/5 px-4 py-3 text-sm">
 				<div>

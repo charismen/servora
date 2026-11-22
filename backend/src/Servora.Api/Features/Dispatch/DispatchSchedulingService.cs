@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Servora.Api.Features.Activity;
+using Servora.Api.Features.Notifications;
 using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Features.Shops;
 using Servora.Api.Infrastructure.Data;
@@ -136,10 +137,17 @@ public sealed record DispatchOperationResult<T>(
 public sealed class DispatchSchedulingService
 {
     private readonly AppDbContext _context;
+    private readonly NotificationDispatcherService? _notificationDispatcher;
+    private readonly IConfiguration? _configuration;
 
-    public DispatchSchedulingService(AppDbContext context)
+    public DispatchSchedulingService(
+        AppDbContext context,
+        NotificationDispatcherService? notificationDispatcher = null,
+        IConfiguration? configuration = null)
     {
         _context = context;
+        _notificationDispatcher = notificationDispatcher;
+        _configuration = configuration;
     }
 
     public async Task<IReadOnlyList<DispatchConflictDto>> FindConflictsAsync(
@@ -186,6 +194,7 @@ public sealed class DispatchSchedulingService
     {
         var ticket = await _context.ServiceTickets
             .Include(t => t.Status)
+            .Include(t => t.Customer)
             .FirstOrDefaultAsync(t => t.Id == ticketId && t.ShopId == shopId && t.DeletedAt == null, cancellationToken);
         if (ticket is null)
         {
@@ -370,6 +379,7 @@ public sealed class DispatchSchedulingService
 
         var ticket = await _context.ServiceTickets
             .Include(t => t.Status)
+            .Include(t => t.Customer)
             .FirstOrDefaultAsync(t => t.Id == ticketId && t.ShopId == shopId && t.DeletedAt == null, cancellationToken);
         if (ticket is null)
         {
@@ -434,6 +444,34 @@ public sealed class DispatchSchedulingService
         });
 
         await _context.SaveChangesAsync(cancellationToken);
+
+        if (_notificationDispatcher is not null && targetStatus is DispatchStatus.EnRoute or DispatchStatus.ArrivedOnSite)
+        {
+            var eventType = targetStatus == DispatchStatus.EnRoute
+                ? NotificationEventType.DispatchEnRoute
+                : NotificationEventType.DispatchArrived;
+            var frontendBaseUrl = (_configuration?["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+            var trackUrl = ticket.PublicTrackingEnabled
+                ? $"{frontendBaseUrl}/track/{ticket.PublicTrackingToken}"
+                : $"{frontendBaseUrl}/app/tickets/{ticket.Id}";
+
+            await _notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+                ShopId: shopId,
+                EventType: eventType,
+                Title: targetStatus == DispatchStatus.EnRoute
+                    ? $"Technician en route for {ticket.TicketNumber}"
+                    : $"Technician arrived on-site for {ticket.TicketNumber}",
+                Message: fullNote,
+                DeepLinkUrl: trackUrl,
+                CustomerName: ticket.Customer?.FullName,
+                CustomerEmail: ticket.Customer?.Email,
+                CustomerPhone: ticket.Customer?.PhoneNumber,
+                ReferenceEntityType: "ServiceTicket",
+                ReferenceEntityId: ticket.Id,
+                Data: new { ticketId = ticket.Id, ticketNumber = ticket.TicketNumber, dispatchStatus = targetStatus.ToString() }),
+                cancellationToken);
+        }
+
         return DispatchOperationResult<ServiceTicket>.Ok(ticket);
     }
 

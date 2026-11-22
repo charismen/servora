@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Servora.Api.Features.Notifications;
 using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Features.Shops;
 using Servora.Api.Infrastructure.Data;
@@ -16,15 +17,21 @@ public sealed class PreventiveMaintenanceJob
     private readonly AppDbContext _context;
     private readonly INotificationService _notificationService;
     private readonly ILogger<PreventiveMaintenanceJob> _logger;
+    private readonly NotificationDispatcherService? _notificationDispatcher;
+    private readonly IConfiguration? _configuration;
 
     public PreventiveMaintenanceJob(
         AppDbContext context,
         INotificationService notificationService,
-        ILogger<PreventiveMaintenanceJob> logger)
+        ILogger<PreventiveMaintenanceJob> logger,
+        NotificationDispatcherService? notificationDispatcher = null,
+        IConfiguration? configuration = null)
     {
         _context = context;
         _notificationService = notificationService;
         _logger = logger;
+        _notificationDispatcher = notificationDispatcher;
+        _configuration = configuration;
     }
 
     public async Task<PreventiveMaintenanceRunResult> ProcessDueSchedulesAsync(
@@ -98,6 +105,24 @@ public sealed class PreventiveMaintenanceJob
                     Title = schedule.Title,
                     Description = message
                 });
+
+                if (_notificationDispatcher is not null)
+                {
+                    var frontendBaseUrl = (_configuration?["PublicFrontendBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+                    await _notificationDispatcher.PublishEventAsync(new NotificationEventEnvelope(
+                        ShopId: schedule.ShopId,
+                        EventType: NotificationEventType.MaintenanceDue,
+                        Title: isDueNow ? $"Maintenance Due: {schedule.Title}" : $"Maintenance Upcoming: {schedule.Title}",
+                        Message: message,
+                        DeepLinkUrl: $"{frontendBaseUrl}/app/maintenance",
+                        CustomerName: schedule.ServiceAsset.Customer?.FullName,
+                        CustomerEmail: schedule.ServiceAsset.Customer?.Email,
+                        CustomerPhone: schedule.ServiceAsset.Customer?.PhoneNumber,
+                        ReferenceEntityType: "MaintenanceSchedule",
+                        ReferenceEntityId: schedule.Id,
+                        Data: new { scheduleId = schedule.Id, title = schedule.Title, isDueNow, asset = $"{schedule.ServiceAsset.Brand} {schedule.ServiceAsset.Model}".Trim() }),
+                        cancellationToken);
+                }
             }
 
             if (isDueNow && schedule.AutoCreateTicket)
