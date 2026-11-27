@@ -113,6 +113,10 @@
 		quantity: string;
 		unitPrice: string;
 		isCompleted: boolean;
+		bonusTaskKey: string;
+		assignedTechnicianUserId: string;
+		deviceCategoryOverride: string;
+		isInternalOnly: boolean;
 	};
 
 	type ProposedWorkItemDraft = {
@@ -125,7 +129,18 @@
 	};
 
 	function makeEmptyWorkItemDraft(): DraftWorkItem {
-		return { itemType: 'Service', title: '', description: '', quantity: '1', unitPrice: '', isCompleted: false };
+		return {
+			itemType: 'Service',
+			title: '',
+			description: '',
+			quantity: '1',
+			unitPrice: '',
+			isCompleted: false,
+			bonusTaskKey: '',
+			assignedTechnicianUserId: '',
+			deviceCategoryOverride: 'Auto',
+			isInternalOnly: false
+		};
 	}
 
 	function makeBillingDraft(current: PageData['payment']) {
@@ -163,6 +178,27 @@
 	const ticket = $derived(data.ticket);
 	const showBilling = $derived(features.showBillingAndPayments && !ticket.isInternalWorkOrder);
 	const showApprovals = $derived(features.showCustomerApprovals && !ticket.isInternalWorkOrder);
+	const isItBlueprint = $derived((data.user.workspace?.industryBlueprintKey ?? 'it_computer') === 'it_computer');
+	const activeBonusTasks = $derived((data.bonusTasks ?? []).filter((task) => task.isActive));
+	const assetTierOptions = $derived([
+		{ value: 'Auto', label: t('tickets.workItems.assetTier.Auto') },
+		{ value: 'Standard', label: t('tickets.workItems.assetTier.Standard') },
+		{ value: 'Gaming', label: isItBlueprint ? t('tickets.workItems.assetTier.Gaming') : t('tickets.workItems.assetTier.Premium') }
+	]);
+	const staffAssigneeOptions = $derived([
+		{ value: '', label: t('tickets.workItems.inheritTicketTech') },
+		...(data.staff ?? []).map((s) => ({ value: String(s.id), label: s.fullName }))
+	]);
+	const bonusTaskPresetOptions = $derived([
+		{ value: '', label: t('tickets.workItems.noBonusPreset') },
+		...activeBonusTasks.map((task) => ({
+			value: task.taskKey,
+			label: `${task.label} (${task.taskKey})`
+		}))
+	]);
+	let templateReplaceExisting = $state(false);
+	let newChecklistTitle = $state('');
+	let newChecklistDescription = $state('');
 	const availableLinkAssets = $derived(
 		(data.allAssets ?? []).filter(
 			(a) => a.id !== ticket.deviceId && !(ticket.linkedAssets ?? []).some((l) => l.serviceAssetId === a.id)
@@ -389,12 +425,34 @@
 		)
 	);
 	const workItemAddLineTotal = $derived(
-		Math.max(0, Number(workItemDraft.quantity || 0)) * Math.max(0, Number(workItemDraft.unitPrice || 0))
+		workItemDraft.isInternalOnly
+			? 0
+			: Math.max(0, Number(workItemDraft.quantity || 0)) * Math.max(0, Number(workItemDraft.unitPrice || 0))
 	);
 	const editWorkItemLineTotal = $derived(
-		Math.max(0, Number(editWorkItemDraft.quantity || 0)) * Math.max(0, Number(editWorkItemDraft.unitPrice || 0))
+		editWorkItemDraft.isInternalOnly
+			? 0
+			: Math.max(0, Number(editWorkItemDraft.quantity || 0)) * Math.max(0, Number(editWorkItemDraft.unitPrice || 0))
 	);
 	const selectedAttachment = $derived(imageAttachments.find(attachment => attachment.id === selectedAttachmentId) ?? imageAttachments[0]);
+
+	function applyBonusTaskPreset(target: 'add' | 'edit', taskKey: string) {
+		const task = activeBonusTasks.find((item) => item.taskKey === taskKey);
+		const draft = target === 'add' ? workItemDraft : editWorkItemDraft;
+		draft.bonusTaskKey = taskKey;
+		if (!task) return;
+		if (!draft.title.trim() || target === 'add') {
+			draft.title = task.label;
+		}
+		if (!draft.description.trim() && task.description) {
+			draft.description = task.description;
+		}
+		if (task.defaultWorkItemType === 'Service' || task.defaultWorkItemType === 'NonStockPart' || task.defaultWorkItemType === 'Fee') {
+			draft.itemType = task.defaultWorkItemType;
+		}
+		draft.isInternalOnly = Boolean(task.defaultIsInternalOnly) || !showBilling;
+		draft.unitPrice = draft.isInternalOnly ? '0' : String(task.defaultCustomerPrice ?? 0);
+	}
 
 	function startEditingWorkItem(item: TicketWorkItem) {
 		editingWorkItemId = item.id;
@@ -404,7 +462,11 @@
 			description: item.description ?? '',
 			quantity: String(item.quantity),
 			unitPrice: String(item.unitPrice),
-			isCompleted: item.isCompleted
+			isCompleted: item.isCompleted,
+			bonusTaskKey: item.bonusTaskKey ?? '',
+			assignedTechnicianUserId: item.assignedTechnicianUserId ? String(item.assignedTechnicianUserId) : '',
+			deviceCategoryOverride: item.deviceCategoryOverride ?? 'Auto',
+			isInternalOnly: Boolean(item.isInternalOnly)
 		};
 	}
 
@@ -1468,9 +1530,25 @@
 										{@const isSavingEdit = pendingAction === `updateWorkItem:${item.id}`}
 										<form method="POST" action="?/updateWorkItem" class="border border-claytile/50 rounded-lg p-4 bg-ash/25 space-y-3" use:enhance={enhanceAction(`updateWorkItem:${item.id}`)}>
 											<input type="hidden" name="workItemId" value={item.id} />
-											<div class="grid grid-cols-1 sm:grid-cols-[175px_1fr] gap-3">
+											{#if activeBonusTasks.length > 0}
 												<div class="space-y-1.5">
-													<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.type')}</span>
+													<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.bonusTaskPreset')}</span>
+													<Dropdown
+														name="bonusTaskKey"
+														bind:value={editWorkItemDraft.bonusTaskKey}
+														onchange={(val) => applyBonusTaskPreset('edit', val)}
+														searchable
+														searchPlaceholder={t('common.search')}
+														noOptionsLabel={t('common.noOptions')}
+														options={bonusTaskPresetOptions}
+													/>
+												</div>
+											{:else}
+												<input type="hidden" name="bonusTaskKey" value={editWorkItemDraft.bonusTaskKey} />
+											{/if}
+											<div class="grid grid-cols-1 sm:grid-cols-[175px_1fr] gap-3 items-end">
+												<div class="space-y-1.5">
+													<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.type')}</span>
 													<Dropdown
 														name="itemType"
 														bind:value={editWorkItemDraft.itemType}
@@ -1478,7 +1556,7 @@
 													/>
 												</div>
 												<label class="space-y-1.5 block">
-													<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.itemTitle')} *</span>
+													<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.itemTitle')} *</span>
 													<input
 														name="title"
 														class="ticket-input h-10 w-full px-3 py-2 text-body-sm"
@@ -1489,7 +1567,7 @@
 												</label>
 											</div>
 											<label class="space-y-1.5 block">
-												<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.descriptionLabel')}</span>
+												<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.descriptionLabel')}</span>
 												<input
 													name="description"
 													class="ticket-input h-10 w-full px-3 py-2 text-body-sm"
@@ -1497,9 +1575,30 @@
 													bind:value={editWorkItemDraft.description}
 												/>
 											</label>
+											<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+												<div class="space-y-1.5">
+													<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.assignedTechnician')}</span>
+													<Dropdown
+														name="assignedTechnicianUserId"
+														bind:value={editWorkItemDraft.assignedTechnicianUserId}
+														searchable
+														searchPlaceholder={t('common.search')}
+														noOptionsLabel={t('common.noOptions')}
+														options={staffAssigneeOptions}
+													/>
+												</div>
+												<div class="space-y-1.5">
+													<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.assetTier', { asset: terms.assetSingular })}</span>
+													<Dropdown
+														name="deviceCategoryOverride"
+														bind:value={editWorkItemDraft.deviceCategoryOverride}
+														options={assetTierOptions}
+													/>
+												</div>
+											</div>
 											<div class="grid grid-cols-1 sm:grid-cols-[96px_minmax(180px,1fr)_minmax(140px,auto)] gap-3 items-end">
 												<label class="space-y-1.5 block">
-													<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.quantity')} *</span>
+													<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.quantity')} *</span>
 													<input
 														name="quantity"
 														type="number"
@@ -1512,30 +1611,37 @@
 													/>
 												</label>
 												<div class="space-y-1.5">
-													<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.unitPrice')}</span>
+													<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.unitPrice')}</span>
 													<CurrencyInput
 														name="unitPrice"
 														prefix={currencySymbol}
 														locale={data.locale}
 														currency={currencyCode}
 														allowDecimals={allowCurrencyDecimals}
+														disabled={editWorkItemDraft.isInternalOnly}
 														inputClass="h-[38px] px-3 py-2 text-body-sm font-mono tabular-nums"
 														placeholder="0"
 														bind:value={editWorkItemDraft.unitPrice}
 													/>
 												</div>
 												<div class="space-y-1.5">
-													<span class="text-label-caps font-label-caps text-secondary uppercase block sm:text-right">{t('tickets.workItems.lineTotal')}</span>
+													<span class="text-label-caps font-label-caps text-secondary uppercase block sm:text-right leading-4">{t('tickets.workItems.lineTotal')}</span>
 													<div class="h-10 px-3 rounded-input border border-stone bg-white flex items-center justify-end font-mono font-semibold text-body-sm tabular-nums text-primary whitespace-nowrap">
 														{formatCurrency(editWorkItemLineTotal, data.locale, currencyCode)}
 													</div>
 												</div>
 											</div>
 											<div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-stone/60">
-												<label class="flex items-center gap-2 min-h-8 text-caption font-medium text-primary cursor-pointer select-none">
-													<input type="checkbox" name="isCompleted" bind:checked={editWorkItemDraft.isCompleted} class="h-4 w-4 rounded border-slate accent-ink cursor-pointer" />
-													<span>{t('tickets.workItems.completed')}</span>
-												</label>
+												<div class="flex flex-wrap items-center gap-4">
+													<label class="flex items-center gap-2 min-h-8 text-caption font-medium text-primary cursor-pointer select-none">
+														<input type="checkbox" name="isCompleted" bind:checked={editWorkItemDraft.isCompleted} class="h-4 w-4 rounded border-slate accent-ink cursor-pointer" />
+														<span>{t('tickets.workItems.completed')}</span>
+													</label>
+													<label class="flex items-center gap-2 min-h-8 text-caption font-medium text-secondary hover:text-primary cursor-pointer select-none">
+														<input type="checkbox" name="isInternalOnly" bind:checked={editWorkItemDraft.isInternalOnly} class="h-4 w-4 rounded border-slate accent-ink cursor-pointer" />
+														<span>{t('tickets.workItems.internalOnly')}</span>
+													</label>
+												</div>
 												<div class="flex items-center gap-2">
 													<button
 														type="button"
@@ -1573,6 +1679,10 @@
 														<input type="hidden" name="description" value={item.description ?? ''} />
 														<input type="hidden" name="quantity" value={item.quantity} />
 														<input type="hidden" name="unitPrice" value={item.unitPrice} />
+														<input type="hidden" name="bonusTaskKey" value={item.bonusTaskKey ?? ''} />
+														<input type="hidden" name="assignedTechnicianUserId" value={item.assignedTechnicianUserId ?? ''} />
+														<input type="hidden" name="deviceCategoryOverride" value={item.deviceCategoryOverride ?? ''} />
+														<input type="hidden" name="isInternalOnly" value={item.isInternalOnly ? 'true' : 'false'} />
 														<input
 															type="checkbox"
 															name="isCompleted"
@@ -1593,6 +1703,23 @@
 														<span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded {item.status === 'Approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : item.status === 'PendingApproval' ? 'bg-amber-50 text-amber-800 border border-amber-200' : item.status === 'Rejected' ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-ash text-secondary border border-stone'}">
 															{labelFor('tickets.workItems.status', item.status)}
 														</span>
+														{#if item.bonusTaskKey}
+															<span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-200">
+																{t('tickets.workItems.bonusBadge')}: {item.bonusTaskKey}
+															</span>
+														{/if}
+														{#if item.isInternalOnly}
+															<span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-200">
+																{t('tickets.workItems.internalBadge')}
+															</span>
+														{/if}
+														{#if item.deviceCategoryOverride}
+															<span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-white text-secondary border border-stone">
+																{item.deviceCategoryOverride === 'Gaming'
+																	? (isItBlueprint ? t('tickets.workItems.assetTier.Gaming') : t('tickets.workItems.assetTier.Premium'))
+																	: t('tickets.workItems.assetTier.Standard')}
+															</span>
+														{/if}
 														{#if item.approvalRequestId}
 															<span class="text-[10px] font-mono tabular-nums px-2 py-0.5 rounded bg-ash text-primary border border-stone">
 																{t('tickets.workItems.approvalLinked')} #{item.approvalRequestId}
@@ -1602,14 +1729,30 @@
 													{#if item.description}
 														<p class="text-caption text-secondary mb-0">{item.description}</p>
 													{/if}
-													<p class="text-caption text-secondary font-mono tabular-nums mb-0">
-														{item.quantity} × {formatCurrency(item.unitPrice, data.locale, currencyCode)}
-													</p>
+													<div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-caption text-secondary">
+														<span class="font-mono tabular-nums">
+															{item.isInternalOnly
+																? `${item.quantity} × ${t('tickets.workItems.internalBadge')}`
+																: `${item.quantity} × ${formatCurrency(item.unitPrice, data.locale, currencyCode)}`}
+														</span>
+														{#if item.assignedTechnicianName}
+															<span class="inline-flex items-center gap-1">
+																<span class="material-symbols-outlined text-[13px]" aria-hidden="true">person</span>
+																<span>{item.assignedTechnicianName}</span>
+															</span>
+														{/if}
+														{#if item.isCompleted && item.completedByName}
+															<span class="inline-flex items-center gap-1 text-emerald-700">
+																<span class="material-symbols-outlined text-[13px]" aria-hidden="true">check_circle</span>
+																<span>{t('tickets.workItems.completedBy')}: {item.completedByName}</span>
+															</span>
+														{/if}
+													</div>
 												</div>
 											</div>
 											<div class="flex sm:flex-col items-center sm:items-end justify-between gap-2 shrink-0">
 												<span class="font-mono font-bold tabular-nums text-body-sm text-primary {item.status === 'Rejected' || item.status === 'Cancelled' ? 'line-through opacity-50' : ''}">
-													{formatCurrency(item.lineTotal, data.locale, currencyCode)}
+													{item.isInternalOnly ? '—' : formatCurrency(item.lineTotal, data.locale, currencyCode)}
 												</span>
 												<div class="flex items-center gap-1.5">
 													{#if item.status === 'Approved' || item.status === 'PendingApproval'}
@@ -1645,9 +1788,25 @@
 						<!-- Add New Work Item Form -->
 						<form method="POST" action="?/createWorkItem" class="rounded-lg border border-stone bg-ash/25 p-4 space-y-3.5" use:enhance={enhanceAction('createWorkItem')}>
 							<h3 class="text-body-sm font-semibold text-primary m-0">{t('tickets.workItems.addTitle')}</h3>
-							<div class="grid grid-cols-1 sm:grid-cols-[175px_1fr] gap-3">
+							{#if activeBonusTasks.length > 0}
 								<div class="space-y-1.5">
-									<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.type')}</span>
+									<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.bonusTaskPreset')}</span>
+									<Dropdown
+										name="bonusTaskKey"
+										bind:value={workItemDraft.bonusTaskKey}
+										onchange={(val) => applyBonusTaskPreset('add', val)}
+										searchable
+										searchPlaceholder={t('common.search')}
+										noOptionsLabel={t('common.noOptions')}
+										options={bonusTaskPresetOptions}
+									/>
+								</div>
+							{:else}
+								<input type="hidden" name="bonusTaskKey" value={workItemDraft.bonusTaskKey} />
+							{/if}
+							<div class="grid grid-cols-1 sm:grid-cols-[175px_1fr] gap-3 items-end">
+								<div class="space-y-1.5">
+									<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.type')}</span>
 									<Dropdown
 										name="itemType"
 										bind:value={workItemDraft.itemType}
@@ -1655,7 +1814,7 @@
 									/>
 								</div>
 								<label class="space-y-1.5 block">
-									<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.itemTitle')} *</span>
+									<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.itemTitle')} *</span>
 									<input
 										name="title"
 										class="ticket-input h-10 w-full px-3.5 py-2 text-body-sm"
@@ -1666,7 +1825,7 @@
 								</label>
 							</div>
 							<label class="space-y-1.5 block">
-								<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.descriptionLabel')}</span>
+								<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.descriptionLabel')}</span>
 								<input
 									name="description"
 									class="ticket-input h-10 w-full px-3.5 py-2 text-body-sm"
@@ -1674,9 +1833,30 @@
 									bind:value={workItemDraft.description}
 								/>
 							</label>
+							<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+								<div class="space-y-1.5">
+									<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.assignedTechnician')}</span>
+									<Dropdown
+										name="assignedTechnicianUserId"
+										bind:value={workItemDraft.assignedTechnicianUserId}
+										searchable
+										searchPlaceholder={t('common.search')}
+										noOptionsLabel={t('common.noOptions')}
+										options={staffAssigneeOptions}
+									/>
+								</div>
+								<div class="space-y-1.5">
+									<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.assetTier', { asset: terms.assetSingular })}</span>
+									<Dropdown
+										name="deviceCategoryOverride"
+										bind:value={workItemDraft.deviceCategoryOverride}
+										options={assetTierOptions}
+									/>
+								</div>
+							</div>
 							<div class="grid grid-cols-1 sm:grid-cols-[96px_minmax(180px,1fr)_minmax(140px,auto)] gap-3 items-end">
 								<label class="space-y-1.5 block">
-									<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.quantity')} *</span>
+									<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.quantity')} *</span>
 									<input
 										name="quantity"
 										type="number"
@@ -1689,32 +1869,39 @@
 									/>
 								</label>
 								<div class="space-y-1.5">
-									<span class="text-label-caps font-label-caps text-secondary uppercase block">{t('tickets.workItems.unitPrice')}</span>
+									<span class="text-label-caps font-label-caps text-secondary uppercase block leading-4">{t('tickets.workItems.unitPrice')}</span>
 									<CurrencyInput
 										name="unitPrice"
 										prefix={currencySymbol}
 										locale={data.locale}
 										currency={currencyCode}
 										allowDecimals={allowCurrencyDecimals}
+										disabled={workItemDraft.isInternalOnly}
 										inputClass="h-[38px] px-3 py-2 text-body-sm font-mono tabular-nums"
 										placeholder="0"
 										bind:value={workItemDraft.unitPrice}
 									/>
 								</div>
 								<div class="space-y-1.5">
-									<span class="text-label-caps font-label-caps text-secondary uppercase block sm:text-right">{t('tickets.workItems.lineTotal')}</span>
+									<span class="text-label-caps font-label-caps text-secondary uppercase block sm:text-right leading-4">{t('tickets.workItems.lineTotal')}</span>
 									<div class="h-10 px-3 rounded-input border border-stone bg-white flex items-center justify-end font-mono font-semibold text-body-sm tabular-nums text-primary whitespace-nowrap">
 										{formatCurrency(workItemAddLineTotal, data.locale, currencyCode)}
 									</div>
 								</div>
 							</div>
 							<div class="flex flex-wrap items-center justify-between gap-3 pt-1">
-								<label class="flex items-center gap-2 min-h-8 text-caption font-medium text-secondary hover:text-primary cursor-pointer select-none">
-									<input type="checkbox" name="isCompleted" bind:checked={workItemDraft.isCompleted} class="h-4 w-4 rounded border-slate accent-ink cursor-pointer" />
-									<span>{t('tickets.workItems.completed')}</span>
-								</label>
+								<div class="flex flex-wrap items-center gap-4">
+									<label class="flex items-center gap-2 min-h-8 text-caption font-medium text-secondary hover:text-primary cursor-pointer select-none">
+										<input type="checkbox" name="isCompleted" bind:checked={workItemDraft.isCompleted} class="h-4 w-4 rounded border-slate accent-ink cursor-pointer" />
+										<span>{t('tickets.workItems.completed')}</span>
+									</label>
+									<label class="flex items-center gap-2 min-h-8 text-caption font-medium text-secondary hover:text-primary cursor-pointer select-none">
+										<input type="checkbox" name="isInternalOnly" bind:checked={workItemDraft.isInternalOnly} class="h-4 w-4 rounded border-slate accent-ink cursor-pointer" />
+										<span>{t('tickets.workItems.internalOnly')}</span>
+									</label>
+								</div>
 								<button
-									class="px-button-x py-button-y rounded-button bg-ink text-white font-medium hover:bg-ink/90 active:scale-95 transition-all text-body-sm shadow-xs cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+									class="h-10 px-4 rounded-button bg-ink text-white font-medium hover:bg-ink/90 active:scale-95 transition-all text-body-sm shadow-xs cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
 									type="submit"
 									disabled={isAddingWorkItem}
 								>
@@ -2168,19 +2355,66 @@
 							</div>
 						</div>
 
-						<form method="POST" action="?/applyTemplate" class="flex flex-col sm:flex-row gap-3" use:enhance={preserveTicketDetailForm}>
-							<div class="flex-1">
-								<Dropdown
-									name="templateId"
-									value=""
-									options={[
-										{ value: '', label: t('tickets.checklist.selectTemplate') },
-										...activeServiceTemplates.map(template => ({ value: template.id.toString(), label: `${template.name} (${template.checklistItems.length})` }))
-									]}
-								/>
+						<form method="POST" action="?/applyTemplate" class="space-y-2.5" use:enhance={preserveTicketDetailForm}>
+							<div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+								<div class="flex-1">
+									<Dropdown
+										name="templateId"
+										value=""
+										options={[
+											{ value: '', label: t('tickets.checklist.selectTemplate') },
+											...activeServiceTemplates.map(template => ({ value: template.id.toString(), label: `${template.name} (${template.checklistItems.length})` }))
+										]}
+									/>
+								</div>
+								<button class="h-10 px-4 rounded-button border border-stone bg-white text-primary hover:bg-ash text-body-sm font-medium cursor-pointer shrink-0 disabled:opacity-50" type="submit" disabled={activeServiceTemplates.length === 0}>
+									{t('tickets.checklist.applyTemplate')}
+								</button>
 							</div>
-							<button class="px-button-x py-button-y rounded-button border border-stone bg-white text-primary hover:bg-ash text-body-sm font-medium cursor-pointer" type="submit" disabled={activeServiceTemplates.length === 0}>
-								{t('tickets.checklist.applyTemplate')}
+							{#if data.checklistItems.length > 0}
+								<label class="inline-flex items-center gap-2 text-caption text-secondary cursor-pointer select-none">
+									<input type="checkbox" name="replaceExisting" bind:checked={templateReplaceExisting} class="h-3.5 w-3.5 rounded border-stone accent-ink" />
+									<span>{t('tickets.checklist.replaceExisting')}</span>
+								</label>
+							{/if}
+						</form>
+
+						<!-- Add Ad-Hoc Checklist Item -->
+						<form
+							method="POST"
+							action="?/addChecklistItem"
+							class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2.5 pt-2 border-t border-stone/60 items-center"
+							use:enhance={() => {
+								return async ({ result, update }) => {
+									await update({ reset: false, invalidateAll: true });
+									if (result.type === 'success') {
+										newChecklistTitle = '';
+										newChecklistDescription = '';
+									}
+								};
+							}}
+						>
+							<input
+								name="title"
+								bind:value={newChecklistTitle}
+								required
+								maxlength="200"
+								placeholder={t('tickets.checklist.addItemTitlePlaceholder')}
+								class="ticket-input h-10 px-3 text-body-sm"
+							/>
+							<input
+								name="description"
+								bind:value={newChecklistDescription}
+								maxlength="500"
+								placeholder={t('tickets.checklist.addItemDescPlaceholder')}
+								class="ticket-input h-10 px-3 text-body-sm"
+							/>
+							<button
+								type="submit"
+								class="h-10 px-4 rounded-button bg-ink text-white hover:bg-ink/90 text-body-sm font-medium cursor-pointer inline-flex items-center justify-center gap-1.5 shrink-0"
+							>
+								<span class="material-symbols-outlined text-[16px]" aria-hidden="true">add</span>
+								<span>{t('tickets.checklist.addItemBtn')}</span>
 							</button>
 						</form>
 
@@ -2188,17 +2422,31 @@
 							{#if data.checklistItems.length === 0}
 								<p class="text-caption text-secondary italic">{t('tickets.checklist.empty')}</p>
 							{:else}
-								{#each data.checklistItems as item}
-									<form method="POST" action="?/updateChecklistItem" class="p-3 rounded-lg border border-stone bg-ash/20" use:enhance={preserveTicketDetailForm}>
-										<input type="hidden" name="checklistItemId" value={item.id} />
-										<label class="flex items-start gap-3 text-body-sm cursor-pointer">
-											<input class="mt-1 rounded border-stone text-ink focus:ring-ink" type="checkbox" name="isCompleted" checked={item.isCompleted} onchange={(event) => event.currentTarget.form?.requestSubmit()} />
-											<span class="flex-1 min-w-0">
-												<span class="font-medium text-primary block {item.isCompleted ? 'line-through opacity-70' : ''}">{item.title}</span>
-												{#if item.description}<span class="block text-caption text-secondary mt-0.5">{item.description}</span>{/if}
-											</span>
-										</label>
-									</form>
+								{#each data.checklistItems as item (item.id)}
+									<div class="p-3 rounded-lg border border-stone bg-ash/20 flex items-start justify-between gap-3">
+										<form method="POST" action="?/updateChecklistItem" class="flex-1 min-w-0" use:enhance={preserveTicketDetailForm}>
+											<input type="hidden" name="checklistItemId" value={item.id} />
+											<label class="flex items-start gap-3 text-body-sm cursor-pointer">
+												<input class="mt-1 rounded border-stone text-ink focus:ring-ink" type="checkbox" name="isCompleted" checked={item.isCompleted} onchange={(event) => event.currentTarget.form?.requestSubmit()} />
+												<span class="flex-1 min-w-0">
+													<span class="font-medium text-primary block {item.isCompleted ? 'line-through opacity-70' : ''}">{item.title}</span>
+													{#if item.description}<span class="block text-caption text-secondary mt-0.5">{item.description}</span>{/if}
+												</span>
+											</label>
+										</form>
+										<form method="POST" action="?/deleteChecklistItem" class="shrink-0" use:enhance={preserveTicketDetailForm}>
+											<input type="hidden" name="checklistItemId" value={item.id} />
+											<DeleteConfirmButton
+												label={t('common.delete')}
+												confirmTitle={t('common.deleteConfirmTitle')}
+												confirmMessage={t('common.deleteConfirm')}
+												cancelLabel={t('common.cancel')}
+												icon="delete"
+												iconOnly
+												class="inline-flex h-7 w-7 items-center justify-center rounded-button border border-stone bg-white text-secondary hover:text-error hover:border-error/30 hover:bg-error/10 transition-colors cursor-pointer"
+											/>
+										</form>
+									</div>
 								{/each}
 							{/if}
 						</div>

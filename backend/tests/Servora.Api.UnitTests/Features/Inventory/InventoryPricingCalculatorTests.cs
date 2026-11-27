@@ -66,4 +66,40 @@ public class InventoryPricingCalculatorTests
 
         errors.Should().HaveCount(7);
     }
+
+    [Fact]
+    public void Calculate_WithMultiplierTaxMode_MatchesEquivalentPercentageMode()
+    {
+        var pctResult = InventoryPricingCalculator.Calculate(new InventoryPricingInput(
+            PurchasePrice: 1_000_000m,
+            ShippingCost: 50_000m,
+            ServiceFee: 100_000m,
+            MarginPercent: 20m,
+            TaxPercent: 11m,
+            TaxMode: InventoryTaxMode.Percentage));
+
+        var multResult = InventoryPricingCalculator.Calculate(new InventoryPricingInput(
+            PurchasePrice: 1_000_000m,
+            ShippingCost: 50_000m,
+            ServiceFee: 100_000m,
+            MarginPercent: 20m,
+            TaxPercent: 1.11m,
+            TaxMode: InventoryTaxMode.Multiplier));
+
+        multResult.Should().Be(pctResult);
+    }
+
+    [Fact]
+    public void Validate_WithMultiplierLessThanOne_ReturnsError()
+    {
+        var errors = InventoryPricingCalculator.Validate(new InventoryPricingInput(
+            PurchasePrice: 100_000m,
+            ShippingCost: 0m,
+            ServiceFee: 0m,
+            MarginPercent: 10m,
+            TaxPercent: 0.95m,
+            TaxMode: InventoryTaxMode.Multiplier));
+
+        errors.Should().ContainSingle(e => e.Contains("multiplier", StringComparison.OrdinalIgnoreCase));
+    }
 }

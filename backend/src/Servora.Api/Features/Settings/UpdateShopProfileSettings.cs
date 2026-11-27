@@ -47,7 +47,8 @@ public static class UpdateShopProfileSettings
         int? OperationalRequiredWorkingDaysPerMonth = null,
         int? OperationalDefaultBreakMinutes = null,
         string? OperationalTimeZone = null,
-        DateTimeOffset? UpdatedAt = null);
+        DateTimeOffset? UpdatedAt = null,
+        string? InventoryDefaultTaxMode = null);
 
     public sealed class Validator : AbstractValidator<Request>
     {
@@ -67,6 +68,11 @@ public static class UpdateShopProfileSettings
                 .WithMessage("Unsupported currency code.");
             RuleFor(request => request.ReceiptFooter).MaximumLength(500);
             RuleFor(request => request.InventoryDefaultTaxPercent).InclusiveBetween(0, 100);
+            RuleFor(request => request.InventoryDefaultTaxMode)
+                .Must(mode => string.IsNullOrWhiteSpace(mode)
+                    || string.Equals(mode.Trim(), "Percentage", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(mode.Trim(), "Multiplier", StringComparison.OrdinalIgnoreCase))
+                .WithMessage("Tax mode must be Percentage or Multiplier.");
             RuleFor(request => request.InventoryRoundingIncrement).InclusiveBetween(1, 1000000);
             RuleFor(request => request.InventoryDefaultUnit).NotEmpty().MaximumLength(20);
             RuleFor(request => request.OperationalOpenTime)
@@ -120,6 +126,10 @@ public static class UpdateShopProfileSettings
                 ? ShopProfileSettingKeys.Defaults[ShopProfileSettingKeys.OperationalTimeZone]
                 : request.OperationalTimeZone.Trim();
 
+            var normalizedTaxMode = string.Equals(request.InventoryDefaultTaxMode?.Trim(), "Multiplier", StringComparison.OrdinalIgnoreCase)
+                ? "Multiplier"
+                : "Percentage";
+
             var values = new Dictionary<string, string>
             {
                 [ShopProfileSettingKeys.ShopName] = request.ShopName.Trim(),
@@ -134,6 +144,7 @@ public static class UpdateShopProfileSettings
                 [ShopProfileSettingKeys.CurrencyCode] = request.CurrencyCode,
                 [ShopProfileSettingKeys.ReceiptFooter] = request.ReceiptFooter.Trim(),
                 [ShopProfileSettingKeys.InventoryDefaultTaxPercent] = request.InventoryDefaultTaxPercent.ToString(CultureInfo.InvariantCulture),
+                [ShopProfileSettingKeys.InventoryDefaultTaxMode] = normalizedTaxMode,
                 [ShopProfileSettingKeys.InventoryRoundingIncrement] = request.InventoryRoundingIncrement.ToString(CultureInfo.InvariantCulture),
                 [ShopProfileSettingKeys.InventoryDefaultUnit] = request.InventoryDefaultUnit.Trim(),
                 [ShopProfileSettingKeys.InventoryAllowDecimalQuantity] = request.InventoryAllowDecimalQuantity.ToString(),

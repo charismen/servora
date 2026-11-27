@@ -55,6 +55,11 @@ public static class GetShopProfileSettings
             ? value
             : bool.Parse(ShopProfileSettingKeys.Defaults[key]);
 
+        var rawTaxMode = Value(ShopProfileSettingKeys.InventoryDefaultTaxMode);
+        var normalizedTaxMode = string.Equals(rawTaxMode, "Multiplier", StringComparison.OrdinalIgnoreCase)
+            ? "Multiplier"
+            : "Percentage";
+
         return new ShopProfileSettings(
             Value(ShopProfileSettingKeys.ShopName),
             Value(ShopProfileSettingKeys.PhoneNumber),
@@ -83,6 +88,7 @@ public static class GetShopProfileSettings
             IntValue(ShopProfileSettingKeys.OperationalDefaultBreakMinutes),
             Value(ShopProfileSettingKeys.OperationalTimeZone),
             logoUrl,
-            updatedAt);
+            updatedAt,
+            normalizedTaxMode);
     }
 }

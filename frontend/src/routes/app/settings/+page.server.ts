@@ -84,6 +84,7 @@ function readSettingsForm(form: FormData): ShopProfileSettings {
 		currencyCode: String(form.get('currencyCode') ?? 'IDR') as ShopProfileSettings['currencyCode'],
 		receiptFooter: String(form.get('receiptFooter') ?? ''),
 		inventoryDefaultTaxPercent: numberValue(form, 'inventoryDefaultTaxPercent', 11),
+		inventoryDefaultTaxMode: String(form.get('inventoryDefaultTaxMode') ?? 'Percentage') === 'Multiplier' ? 'Multiplier' : 'Percentage',
 		inventoryRoundingIncrement: numberValue(form, 'inventoryRoundingIncrement', 1000),
 		inventoryDefaultUnit: String(form.get('inventoryDefaultUnit') ?? 'pcs'),
 		inventoryAllowDecimalQuantity: form.get('inventoryAllowDecimalQuantity') === 'on',

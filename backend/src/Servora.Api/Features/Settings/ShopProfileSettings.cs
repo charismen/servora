@@ -28,7 +28,8 @@ public sealed record ShopProfileSettings(
     int OperationalDefaultBreakMinutes,
     string OperationalTimeZone,
     string? LogoUrl,
-    DateTimeOffset? UpdatedAt = null);
+    DateTimeOffset? UpdatedAt = null,
+    string InventoryDefaultTaxMode = "Percentage");
 
 public static class ShopProfileSettingKeys
 {
@@ -44,6 +45,7 @@ public static class ShopProfileSettingKeys
     public const string CurrencyCode = "ShopProfile.CurrencyCode";
     public const string ReceiptFooter = "ShopProfile.ReceiptFooter";
     public const string InventoryDefaultTaxPercent = "Inventory.DefaultTaxPercent";
+    public const string InventoryDefaultTaxMode = "Inventory.DefaultTaxMode";
     public const string InventoryRoundingIncrement = "Inventory.RoundingIncrement";
     public const string InventoryDefaultUnit = "Inventory.DefaultUnit";
     public const string InventoryAllowDecimalQuantity = "Inventory.AllowDecimalQuantity";
@@ -73,6 +75,7 @@ public static class ShopProfileSettingKeys
         [CurrencyCode] = "IDR",
         [ReceiptFooter] = "Thank you. Please present this receipt or reference number for pickup or verification.",
         [InventoryDefaultTaxPercent] = "11",
+        [InventoryDefaultTaxMode] = "Percentage",
         [InventoryRoundingIncrement] = "1000",
         [InventoryDefaultUnit] = "pcs",
         [InventoryAllowDecimalQuantity] = "true",

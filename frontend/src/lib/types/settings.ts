@@ -1,3 +1,5 @@
+export type InventoryTaxMode = 'Percentage' | 'Multiplier';
+
 export type ShopProfileSettings = {
 	shopName: string;
 	phoneNumber: string;
@@ -11,6 +13,7 @@ export type ShopProfileSettings = {
 	currencyCode: 'IDR' | 'USD' | 'SGD' | 'EUR' | 'MYR' | 'GBP' | 'AUD' | string;
 	receiptFooter: string;
 	inventoryDefaultTaxPercent: number;
+	inventoryDefaultTaxMode?: InventoryTaxMode;
 	inventoryRoundingIncrement: number;
 	inventoryDefaultUnit: string;
 	inventoryAllowDecimalQuantity: boolean;

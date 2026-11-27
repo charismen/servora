@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Servora.Api.Features.Attendance;
 using Servora.Api.Features.Payroll.Bonuses;
+using Servora.Api.Features.ServiceTickets;
 using Servora.Api.Features.Shops;
 using Servora.Api.Infrastructure.Data;
 
@@ -145,12 +146,26 @@ public sealed class PayrollCalculationService(
             var basePayMode = profile?.BasePayMode ?? BasePayMode.TieredDaily;
             var baseHourlyRate = profile?.BaseHourlyRate ?? 0m;
             var tieredRatesJson = profile?.TieredRatesJson ?? FreelanceProfile.DefaultTieredRatesJson;
+            var payPolicy = TieredWageCalculator.ParsePayPolicy(profile?.PayPolicyJson);
+
+            var completedServiceRevenue = 0m;
+            if (basePayMode == BasePayMode.RevenueShare)
+            {
+                completedServiceRevenue = await ComputeCompletedServiceRevenueAsync(
+                    shopId,
+                    worker.UserId,
+                    startDateTimeUtc,
+                    endDateTimeExclusiveUtc,
+                    cancellationToken);
+            }
 
             var wageCalc = TieredWageCalculator.Calculate(
                 basePayMode,
                 baseHourlyRate,
                 tieredRatesJson,
-                approvedAttendances);
+                approvedAttendances,
+                payPolicy,
+                completedServiceRevenue);
 
             var bonusResults = new List<BonusEvaluationResult>();
             if (profile?.BonusConfigs is { Count: > 0 })
@@ -235,6 +250,31 @@ public sealed class PayrollCalculationService(
             string.IsNullOrWhiteSpace(cycle) ? "monthly" : cycle.Trim().ToLowerInvariant(),
             totals,
             workerRows);
+    }
+
+    private async Task<decimal> ComputeCompletedServiceRevenueAsync(
+        int shopId,
+        int userId,
+        DateTimeOffset startDateTimeUtc,
+        DateTimeOffset endDateTimeExclusiveUtc,
+        CancellationToken cancellationToken)
+    {
+        var items = await dbContext.ServiceTicketWorkItems
+            .AsNoTracking()
+            .Where(item =>
+                item.ShopId == shopId &&
+                !item.IsInternalOnly &&
+                item.Status == WorkItemStatus.Approved &&
+                item.ServiceTicket.DeletedAt == null &&
+                item.ServiceTicket.Status.IsFinal &&
+                !item.ServiceTicket.Status.IsCancelled &&
+                (item.ServiceTicket.UpdatedAt ?? item.ServiceTicket.CreatedAt) >= startDateTimeUtc &&
+                (item.ServiceTicket.UpdatedAt ?? item.ServiceTicket.CreatedAt) < endDateTimeExclusiveUtc &&
+                ((item.CompletedByUserId ?? item.AssignedTechnicianUserId ?? item.ServiceTicket.AssignedTechnicianUserId) == userId))
+            .Select(item => new { item.Quantity, item.UnitPrice })
+            .ToListAsync(cancellationToken);
+
+        return Math.Round(items.Sum(i => i.Quantity * i.UnitPrice), 2, MidpointRounding.AwayFromZero);
     }
 }
 

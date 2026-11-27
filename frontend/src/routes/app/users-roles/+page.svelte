@@ -12,10 +12,14 @@
 	import type {
 		BasePayMode,
 		CompletionMilestone,
+		CompensationTemplate,
+		FallbackPayStrategy,
+		FreelancePayPolicy,
 		ShopPermission,
 		ShopRole,
 		ShopUser,
 		TaskItemizedRuleConfig,
+		TaskPayoutTrigger,
 		WageTierBracket
 	} from '$lib/types/shop-users';
 	import type { ActionData, PageData } from './$types';
@@ -24,6 +28,22 @@
 	const t = $derived(createTranslator(data.locale));
 	const canWrite = $derived(can(data.user.permissions, permissions.settingsWrite));
 	const currencyCode = $derived(data.shopProfile?.currencyCode ?? 'IDR');
+	const isItBlueprint = $derived((data.user.workspace?.industryBlueprintKey ?? 'it_computer') === 'it_computer');
+	const currencySymbol = $derived(
+		currencyCode === 'IDR'
+			? 'Rp'
+			: currencyCode === 'MYR'
+				? 'RM'
+				: currencyCode === 'SGD'
+					? 'S$'
+					: currencyCode === 'EUR'
+						? '€'
+						: currencyCode === 'GBP'
+							? '£'
+							: currencyCode === 'AUD'
+								? 'A$'
+								: '$'
+	);
 
 	let activeTab = $state<'users' | 'roles'>('users');
 	let roleSearch = $state('');
@@ -108,8 +128,42 @@
 	let modalCancellationFee = $state(25000);
 	let modalCancellationRequireEvidence = $state(true);
 	let modalTaskItemizedActive = $state(false);
+	let modalTaskPayoutTrigger = $state<TaskPayoutTrigger>('TicketFinalized');
 	let modalTaskRules = $state<TaskItemizedRuleConfig[]>([]);
+	let modalTemplateId = $state<string>('');
+	let modalFixedDailyRate = $state<number>(100000);
+	let modalFixedMonthlySalary = $state<number>(3000000);
+	let modalStandardWorkDays = $state<number>(26);
+	let modalProrateMonthly = $state<boolean>(false);
+	let modalRevenueSharePercent = $state<number>(15);
+	let modalFallbackStrategy = $state<FallbackPayStrategy>('ProratedHourly');
+	let modalOvertimeThreshold = $state<string>('');
+	let modalOvertimeMultiplier = $state<number>(1.5);
+	let modalWeekendMultiplier = $state<number>(1.0);
+	let showAdvancedPolicy = $state<boolean>(false);
 	let nextTaskRuleSeq = 1;
+
+	const modalPayPolicyJson = $derived.by(() => {
+		const policy: FreelancePayPolicy = {
+			fixedDailyRate: Number(modalFixedDailyRate) || 0,
+			fixedMonthlySalary: Number(modalFixedMonthlySalary) || 0,
+			standardWorkDaysPerMonth: Math.max(1, Number(modalStandardWorkDays) || 26),
+			prorateMonthlyByAttendance: modalProrateMonthly,
+			revenueSharePercent: Number(modalRevenueSharePercent) || 0,
+			fallbackStrategy: modalFallbackStrategy,
+			overtimeThresholdHoursPerDay: modalOvertimeThreshold.trim() ? Number(modalOvertimeThreshold) : null,
+			overtimeMultiplier: Number(modalOvertimeMultiplier) || 1.0,
+			weekendMultiplier: Number(modalWeekendMultiplier) || 1.0,
+			taskBonusTrigger: modalTaskPayoutTrigger
+		};
+		return JSON.stringify(policy);
+	});
+
+	const modalShowTieredBrackets = $derived(
+		modalBasePayMode === 'TieredDaily' ||
+			modalBasePayMode === 'TieredDailyAverage' ||
+			modalBasePayMode === 'TieredMonthly'
+	);
 
 	const permissionCategoriesMeta: { key: string; titleKey: string; icon: string }[] = [
 		{ key: 'customers', titleKey: 'settings.permissionGroup.customers', icon: 'person' },
@@ -316,6 +370,26 @@
 
 		const taskCfg = profile?.bonusConfigs?.find((c) => c.bonusTypeCode === 'TASK_ITEMIZED');
 		modalTaskItemizedActive = taskCfg ? taskCfg.isActive : false;
+		const policy = profile?.payPolicy ?? {};
+		modalTemplateId = profile?.compensationTemplateId ? String(profile.compensationTemplateId) : '';
+		modalFixedDailyRate = policy.fixedDailyRate ?? 100000;
+		modalFixedMonthlySalary = policy.fixedMonthlySalary ?? 3000000;
+		modalStandardWorkDays = policy.standardWorkDaysPerMonth ?? 26;
+		modalProrateMonthly = Boolean(policy.prorateMonthlyByAttendance);
+		modalRevenueSharePercent = policy.revenueSharePercent ?? 15;
+		modalFallbackStrategy = (policy.fallbackStrategy as FallbackPayStrategy) || 'ProratedHourly';
+		modalOvertimeThreshold = policy.overtimeThresholdHoursPerDay != null ? String(policy.overtimeThresholdHoursPerDay) : '';
+		modalOvertimeMultiplier = policy.overtimeMultiplier ?? 1.5;
+		modalWeekendMultiplier = policy.weekendMultiplier ?? 1.0;
+		showAdvancedPolicy = Boolean(
+			policy.overtimeThresholdHoursPerDay ||
+				(policy.weekendMultiplier && policy.weekendMultiplier !== 1) ||
+				(policy.fallbackStrategy && policy.fallbackStrategy !== 'ProratedHourly')
+		);
+		modalTaskPayoutTrigger =
+			(taskCfg?.parameters?.payoutTrigger as TaskPayoutTrigger) ||
+			(policy.taskBonusTrigger as TaskPayoutTrigger) ||
+			'TicketFinalized';
 		const rawRules = taskCfg?.parameters?.rules as TaskItemizedRuleConfig[] | undefined;
 		modalTaskRules =
 			Array.isArray(rawRules) && rawRules.length > 0
@@ -327,6 +401,75 @@
 						rewardPerUnit: Number(r.rewardPerUnit || 25000)
 					}))
 				: [];
+	}
+
+	function applyCompensationTemplateToDraft(templateIdStr: string) {
+		modalTemplateId = templateIdStr;
+		const id = Number(templateIdStr);
+		const tpl = (data.compensationTemplates ?? []).find((item: CompensationTemplate) => item.id === id);
+		if (!tpl) return;
+		modalBasePayMode = (tpl.basePayMode as BasePayMode) ?? 'TieredDaily';
+		modalBaseHourlyRate = tpl.baseHourlyRate ?? 0;
+		modalBrackets = tpl.tieredRates?.length ? tpl.tieredRates.map((b) => ({ ...b })) : [];
+		const p = tpl.payPolicy ?? {};
+		modalFixedDailyRate = p.fixedDailyRate ?? 100000;
+		modalFixedMonthlySalary = p.fixedMonthlySalary ?? 3000000;
+		modalStandardWorkDays = p.standardWorkDaysPerMonth ?? 26;
+		modalProrateMonthly = Boolean(p.prorateMonthlyByAttendance);
+		modalRevenueSharePercent = p.revenueSharePercent ?? 15;
+		modalFallbackStrategy = (p.fallbackStrategy as FallbackPayStrategy) || 'ProratedHourly';
+		modalOvertimeThreshold = p.overtimeThresholdHoursPerDay != null ? String(p.overtimeThresholdHoursPerDay) : '';
+		modalOvertimeMultiplier = p.overtimeMultiplier ?? 1.5;
+		modalWeekendMultiplier = p.weekendMultiplier ?? 1.0;
+
+		const taskCfg = tpl.bonusConfigs?.find((c) => c.bonusTypeCode === 'TASK_ITEMIZED');
+		if (taskCfg) {
+			modalTaskItemizedActive = taskCfg.isActive;
+			modalTaskPayoutTrigger =
+				(taskCfg.parameters?.payoutTrigger as TaskPayoutTrigger) ||
+				(p.taskBonusTrigger as TaskPayoutTrigger) ||
+				'TicketFinalized';
+			const rules = taskCfg.parameters?.rules as TaskItemizedRuleConfig[] | undefined;
+			if (Array.isArray(rules)) {
+				modalTaskRules = rules.map((r) => ({ ...r }));
+			}
+		}
+	}
+
+	function importCatalogTasksToWorker() {
+		const catalog = data.bonusTasks ?? [];
+		if (catalog.length === 0) {
+			loadDefaultTaskRules();
+			return;
+		}
+		const rules: TaskItemizedRuleConfig[] = [];
+		for (const task of catalog) {
+			if (task.defaultGamingRate > 0 && task.defaultGamingRate !== task.defaultStandardRate) {
+				rules.push({
+					taskKey: task.taskKey,
+					taskLabel: task.label,
+					matcherKeyword: task.legacyKeywords ?? task.label,
+					deviceCategory: 'Standard',
+					rewardPerUnit: task.defaultStandardRate
+				});
+				rules.push({
+					taskKey: task.taskKey,
+					taskLabel: task.label,
+					matcherKeyword: task.legacyKeywords ?? task.label,
+					deviceCategory: 'Gaming',
+					rewardPerUnit: task.defaultGamingRate
+				});
+			} else {
+				rules.push({
+					taskKey: task.taskKey,
+					taskLabel: task.label,
+					matcherKeyword: task.legacyKeywords ?? task.label,
+					deviceCategory: 'Any',
+					rewardPerUnit: task.defaultStandardRate
+				});
+			}
+		}
+		modalTaskRules = rules;
 	}
 
 	function loadDefaultMilestones() {
@@ -442,12 +585,20 @@
 	>
 		{#snippet actions()}
 			{#if canWrite}
-				{#if activeTab === 'users'}
-					<button
-						type="button"
-						onclick={() => (addUserModalOpen = true)}
-						class="inline-flex h-9 items-center gap-1.5 rounded-button bg-ink px-3.5 text-body-sm font-medium text-white shadow-xs hover:bg-ink/90 active:scale-95 transition-all cursor-pointer"
+				<div class="flex flex-wrap items-center gap-2">
+					<a
+						href="/app/settings/compensation-catalog"
+						class="inline-flex h-9 items-center gap-1.5 rounded-button border border-stone bg-white px-3 text-body-sm font-medium text-ink hover:bg-ash transition-colors shadow-2xs"
 					>
+						<span class="material-symbols-outlined text-[17px]" aria-hidden="true">payments</span>
+						<span>{t('compensationCatalog.navLabel')}</span>
+					</a>
+					{#if activeTab === 'users'}
+						<button
+							type="button"
+							onclick={() => (addUserModalOpen = true)}
+							class="inline-flex h-9 items-center gap-1.5 rounded-button bg-ink px-3.5 text-body-sm font-medium text-white shadow-xs hover:bg-ink/90 active:scale-95 transition-all cursor-pointer"
+						>
 						<span class="material-symbols-outlined text-[18px]">person_add</span>
 						<span>{t('settings.addUser')}</span>
 					</button>
@@ -460,7 +611,8 @@
 						<span class="material-symbols-outlined text-[18px]">add_moderator</span>
 						<span>{t('settings.newRole')}</span>
 					</button>
-				{/if}
+					{/if}
+				</div>
 			{/if}
 		{/snippet}
 	</PageHeader>
@@ -1087,6 +1239,7 @@
 		<div
 			class="w-[min(640px,calc(100vw-2rem))] max-h-[calc(100vh-3rem)] overflow-y-auto rounded-2xl border border-stone bg-white p-6 shadow-2xl space-y-5"
 			role="dialog"
+			tabindex="-1"
 			aria-modal="true"
 			aria-labelledby="add-user-modal-title"
 		>
@@ -1245,6 +1398,7 @@
 		<div
 			class="w-[min(640px,calc(100vw-2rem))] max-h-[calc(100vh-3rem)] overflow-y-auto rounded-2xl border border-stone bg-white p-6 shadow-2xl space-y-5"
 			role="dialog"
+			tabindex="-1"
 			aria-modal="true"
 			aria-labelledby="edit-user-modal-title"
 		>
@@ -1484,6 +1638,7 @@
 		<div
 			class="w-[min(760px,calc(100vw-2rem))] max-h-[calc(100vh-3rem)] overflow-y-auto rounded-2xl border border-stone bg-white p-6 shadow-2xl space-y-5"
 			role="dialog"
+			tabindex="-1"
 			aria-modal="true"
 			aria-labelledby="role-modal-title"
 		>
@@ -1656,6 +1811,7 @@
 		<div
 			class="w-[min(860px,calc(100vw-2rem))] max-h-[calc(100vh-3rem)] overflow-y-auto rounded-2xl border border-stone bg-white p-6 sm:p-7 shadow-2xl space-y-6"
 			role="dialog"
+			tabindex="-1"
 			aria-modal="true"
 			aria-labelledby="freelance-modal-title"
 		>
@@ -1692,42 +1848,195 @@
 				}}
 			>
 				<input type="hidden" name="userId" value={editingUser.userId} />
+				<input type="hidden" name="compensationTemplateId" value={modalTemplateId} />
 				<input type="hidden" name="tieredRatesJson" value={JSON.stringify(modalBrackets)} />
+				<input type="hidden" name="payPolicyJson" value={modalPayPolicyJson} />
 				<input type="hidden" name="maintenanceMilestonesJson" value={JSON.stringify(modalMilestones)} />
 				<input type="hidden" name="maintenanceMode" value={modalMaintenanceMode} />
 				<input type="hidden" name="maintenanceIsRetroactive" value={modalMaintenanceIsRetroactive ? 'on' : 'off'} />
+				<input type="hidden" name="taskPayoutTrigger" value={modalTaskPayoutTrigger} />
 				<input type="hidden" name="taskItemizedRulesJson" value={JSON.stringify(modalTaskRules)} />
 
-				<!-- Base Pay Mode & Hourly Rate -->
-				<div class="grid grid-cols-1 md:grid-cols-2 gap-md p-4 rounded-xl border border-stone/80 bg-surface-container-low/40">
-					<div class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.basePayMode')}</span>
+				<!-- Compensation Template Quick Apply -->
+				{#if (data.compensationTemplates ?? []).length > 0}
+					<div class="rounded-xl border border-stone bg-ash/40 p-4 space-y-2">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps">
+								{t('settings.compensationTemplate')}
+							</span>
+							<a href="/app/settings/compensation-catalog?tab=templates" class="text-xs font-semibold text-claytile hover:underline">
+								{t('compensationCatalog.manageTemplates')}
+							</a>
+						</div>
 						<Dropdown
-							name="basePayMode"
-							bind:value={modalBasePayMode}
+							value={modalTemplateId}
+							onchange={applyCompensationTemplateToDraft}
 							options={[
-								{ value: 'TieredDailyAverage', label: t('settings.basePayMode.TieredDailyAverage') },
-								{ value: 'TieredDaily', label: t('settings.basePayMode.TieredDaily') },
-								{ value: 'Hourly', label: t('settings.basePayMode.Hourly') },
-								{ value: 'TieredMonthly', label: t('settings.basePayMode.TieredMonthly') }
+								{ value: '', label: t('settings.compensationTemplateCustom') },
+								...(data.compensationTemplates ?? []).map((tpl) => ({
+									value: String(tpl.id),
+									label: `${tpl.name} (${t(`settings.basePayMode.${tpl.basePayMode}`)})`
+								}))
 							]}
 						/>
+						<p class="text-[11px] text-secondary">{t('settings.compensationTemplateHint')}</p>
+					</div>
+				{/if}
+
+				<!-- Base Pay Mode & Primary Rate -->
+				<div class="p-4 rounded-xl border border-stone/80 bg-surface-container-low/40 space-y-4">
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-md items-end">
+						<div class="space-y-1.5 block">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.basePayMode')}</span>
+							<Dropdown
+								name="basePayMode"
+								bind:value={modalBasePayMode}
+								options={[
+									{ value: 'TieredDailyAverage', label: t('settings.basePayMode.TieredDailyAverage') },
+									{ value: 'TieredDaily', label: t('settings.basePayMode.TieredDaily') },
+									{ value: 'Hourly', label: t('settings.basePayMode.Hourly') },
+									{ value: 'TieredMonthly', label: t('settings.basePayMode.TieredMonthly') },
+									{ value: 'FixedDaily', label: t('settings.basePayMode.FixedDaily') },
+									{ value: 'FixedMonthly', label: t('settings.basePayMode.FixedMonthly') },
+									{ value: 'CommissionOnly', label: t('settings.basePayMode.CommissionOnly') },
+									{ value: 'RevenueShare', label: t('settings.basePayMode.RevenueShare') }
+								]}
+							/>
+						</div>
+
+						{#if modalBasePayMode === 'FixedDaily'}
+							<div class="space-y-1.5 block">
+								<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.payPolicy.fixedDailyRate')}</span>
+								<CurrencyInput
+									prefix={currencySymbol}
+									locale={data.locale}
+									currency={currencyCode}
+									bind:value={modalFixedDailyRate}
+								/>
+							</div>
+						{:else if modalBasePayMode === 'FixedMonthly'}
+							<div class="space-y-1.5 block">
+								<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.payPolicy.fixedMonthlySalary')}</span>
+								<CurrencyInput
+									prefix={currencySymbol}
+									locale={data.locale}
+									currency={currencyCode}
+									bind:value={modalFixedMonthlySalary}
+								/>
+							</div>
+						{:else if modalBasePayMode === 'RevenueShare'}
+							<label class="space-y-1.5 block">
+								<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.payPolicy.revenueSharePercent')}</span>
+								<input
+									type="number"
+									min="0"
+									max="100"
+									step="0.5"
+									bind:value={modalRevenueSharePercent}
+									class="w-full h-10 rounded-input border border-stone bg-white px-3 text-body-sm font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
+								/>
+							</label>
+						{:else if modalBasePayMode === 'CommissionOnly'}
+							<div class="rounded-lg border border-stone bg-white px-3 py-2.5 text-xs text-secondary">
+								{t('settings.payPolicy.commissionOnlyHint')}
+							</div>
+						{:else}
+							<div class="space-y-1.5 block">
+								<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.baseHourlyRate')}</span>
+								<CurrencyInput
+									name="baseHourlyRate"
+									prefix={currencySymbol}
+									locale={data.locale}
+									currency={currencyCode}
+									bind:value={modalBaseHourlyRate}
+								/>
+							</div>
+						{/if}
 					</div>
 
-					<label class="space-y-1 block">
-						<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.baseHourlyRate')}</span>
-						<CurrencyInput
-							name="baseHourlyRate"
-							prefix={currencyCode === 'IDR' ? 'Rp' : '$'}
-							locale={data.locale}
-							currency={currencyCode}
-							bind:value={modalBaseHourlyRate}
-						/>
-						<span class="block text-[11px] text-secondary">{t('settings.baseHourlyRateHint')}</span>
-					</label>
+					{#if modalBasePayMode === 'FixedMonthly'}
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-md items-center pt-1 border-t border-stone/60">
+							<label class="space-y-1.5 block">
+								<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.payPolicy.standardWorkDays')}</span>
+								<input
+									type="number"
+									min="1"
+									max="31"
+									bind:value={modalStandardWorkDays}
+									class="w-full h-10 rounded-input border border-stone bg-white px-3 text-body-sm font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
+								/>
+							</label>
+							<label class="flex items-center gap-2 text-xs font-medium text-ink pt-4 cursor-pointer">
+								<input type="checkbox" bind:checked={modalProrateMonthly} class="rounded border-stone text-ink focus:ring-0" />
+								<span>{t('settings.payPolicy.prorateMonthly')}</span>
+							</label>
+						</div>
+					{/if}
+
+					<!-- Collapsible Advanced Pay Policy -->
+					<div class="pt-2 border-t border-stone/60">
+						<button
+							type="button"
+							onclick={() => (showAdvancedPolicy = !showAdvancedPolicy)}
+							class="inline-flex items-center gap-1 text-xs font-semibold text-secondary hover:text-ink cursor-pointer"
+						>
+							<span class="material-symbols-outlined text-[16px] transition-transform {showAdvancedPolicy ? 'rotate-180' : ''}" aria-hidden="true">expand_more</span>
+							<span>{t('settings.payPolicy.advancedTitle')}</span>
+						</button>
+						{#if showAdvancedPolicy}
+							<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 items-end pt-3">
+								<div class="space-y-1.5">
+									<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.payPolicy.fallbackStrategy')}</span>
+									<Dropdown
+										size="sm"
+										bind:value={modalFallbackStrategy}
+										options={[
+											{ value: 'ProratedHourly', label: t('settings.payPolicy.fallback.ProratedHourly') },
+											{ value: 'LowerTierFloor', label: t('settings.payPolicy.fallback.LowerTierFloor') },
+											{ value: 'Zero', label: t('settings.payPolicy.fallback.Zero') }
+										]}
+									/>
+								</div>
+								<label class="space-y-1.5 block">
+									<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.payPolicy.overtimeThreshold')}</span>
+									<input
+										type="number"
+										min="0"
+										max="24"
+										step="0.5"
+										bind:value={modalOvertimeThreshold}
+										placeholder="8"
+										class="w-full h-8 rounded-input border border-stone bg-white px-2.5 text-xs font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
+									/>
+								</label>
+								<label class="space-y-1.5 block">
+									<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.payPolicy.overtimeMultiplier')}</span>
+									<input
+										type="number"
+										min="1"
+										max="5"
+										step="0.25"
+										bind:value={modalOvertimeMultiplier}
+										class="w-full h-8 rounded-input border border-stone bg-white px-2.5 text-xs font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
+									/>
+								</label>
+								<label class="space-y-1.5 block">
+									<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.payPolicy.weekendMultiplier')}</span>
+									<input
+										type="number"
+										min="0.5"
+										max="5"
+										step="0.25"
+										bind:value={modalWeekendMultiplier}
+										class="w-full h-8 rounded-input border border-stone bg-white px-2.5 text-xs font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
+									/>
+								</label>
+							</div>
+						{/if}
+					</div>
 				</div>
 
-				{#if modalBasePayMode !== 'Hourly'}
+				{#if modalShowTieredBrackets}
 					<div class="rounded-xl border border-stone bg-white p-4 space-y-3.5 shadow-2xs">
 						<div class="flex flex-wrap items-center justify-between gap-sm border-b border-stone/60 pb-2.5">
 							<div>
@@ -1757,47 +2066,47 @@
 							{#each modalBrackets as bracket, index}
 								<div class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.3fr_1.2fr_auto] gap-2 items-end rounded-lg border border-stone bg-ash/30 p-2.5">
 									<label class="space-y-1">
-										<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.tierMinHours')}</span>
+										<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.tierMinHours')}</span>
 										<input
 											type="number"
 											min="0"
 											max="744"
 											step="0.25"
 											bind:value={bracket.minHours}
-											class="w-full rounded-input border border-stone bg-white p-1.5 text-body-sm text-ink focus:border-ink focus:outline-none"
+											class="w-full h-9 rounded-input border border-stone bg-white px-2.5 text-body-sm font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
 										/>
 									</label>
 									<label class="space-y-1">
-										<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.tierMaxHours')}</span>
+										<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.tierMaxHours')}</span>
 										<input
 											type="number"
 											min="0"
 											max="744"
 											step="0.25"
 											bind:value={bracket.maxHours}
-											class="w-full rounded-input border border-stone bg-white p-1.5 text-body-sm text-ink focus:border-ink focus:outline-none"
+											class="w-full h-9 rounded-input border border-stone bg-white px-2.5 text-body-sm font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
 										/>
 									</label>
-									<label class="space-y-1">
-										<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.tierFlatRate')}</span>
+									<div class="space-y-1">
+										<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.tierFlatRate')}</span>
 										<CurrencyInput
 											bind:value={bracket.flatRate}
-											prefix={currencyCode === 'IDR' ? 'Rp' : '$'}
+											prefix={currencySymbol}
 											locale={data.locale}
 											currency={currencyCode}
-											inputClass="p-1.5 text-body-sm"
+											inputClass="h-[34px] px-2 text-body-sm font-mono tabular-nums"
 										/>
-									</label>
-									<label class="space-y-1">
-										<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.tierOvertimeHourly')}</span>
+									</div>
+									<div class="space-y-1">
+										<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.tierOvertimeHourly')}</span>
 										<CurrencyInput
 											bind:value={bracket.hourlyRate}
-											prefix={currencyCode === 'IDR' ? 'Rp' : '$'}
+											prefix={currencySymbol}
 											locale={data.locale}
 											currency={currencyCode}
-											inputClass="p-1.5 text-body-sm"
+											inputClass="h-[34px] px-2 text-body-sm font-mono tabular-nums"
 										/>
-									</label>
+									</div>
 									<button
 										type="button"
 										onclick={() => removeBracket(index)}
@@ -1870,35 +2179,35 @@
 										{#each modalMilestones as milestone, index}
 											<div class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.5fr_auto] gap-2 items-end rounded-lg border border-stone bg-ash/30 p-2.5">
 												<label class="space-y-1">
-													<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.milestoneMinUnits')}</span>
+													<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.bonus.milestoneMinUnits')}</span>
 													<input
 														type="number"
 														min="0"
 														step="1"
 														bind:value={milestone.minUnits}
-														class="w-full rounded-input border border-stone bg-white p-1.5 text-body-sm text-ink focus:border-ink focus:outline-none"
+														class="w-full h-9 rounded-input border border-stone bg-white px-2.5 text-body-sm font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
 													/>
 												</label>
 												<label class="space-y-1">
-													<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.milestoneMaxUnits')}</span>
+													<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.bonus.milestoneMaxUnits')}</span>
 													<input
 														type="number"
 														min="0"
 														step="1"
 														bind:value={milestone.maxUnits}
-														class="w-full rounded-input border border-stone bg-white p-1.5 text-body-sm text-ink focus:border-ink focus:outline-none"
+														class="w-full h-9 rounded-input border border-stone bg-white px-2.5 text-body-sm font-mono tabular-nums text-ink focus:border-ink focus:outline-none"
 													/>
 												</label>
-												<label class="space-y-1">
-													<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.milestoneRewardPerUnit')}</span>
+												<div class="space-y-1">
+													<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.bonus.milestoneRewardPerUnit')}</span>
 													<CurrencyInput
 														bind:value={milestone.rewardPerUnit}
-														prefix={currencyCode === 'IDR' ? 'Rp' : '$'}
+														prefix={currencySymbol}
 														locale={data.locale}
 														currency={currencyCode}
-														inputClass="p-1.5 text-body-sm"
+														inputClass="h-[34px] px-2 text-body-sm font-mono tabular-nums"
 													/>
-												</label>
+												</div>
 												<button
 													type="button"
 													onclick={() => removeMilestone(index)}
@@ -1927,7 +2236,7 @@
 										<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.rewardPerUnit')}</span>
 										<CurrencyInput
 											name="maintenanceRewardPerUnit"
-											prefix={currencyCode === 'IDR' ? 'Rp' : '$'}
+											prefix={currencySymbol}
 											locale={data.locale}
 											currency={currencyCode}
 											bind:value={modalMaintenanceRewardPerUnit}
@@ -1937,7 +2246,7 @@
 										<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.flatMilestoneReward')}</span>
 										<CurrencyInput
 											name="maintenanceFlatReward"
-											prefix={currencyCode === 'IDR' ? 'Rp' : '$'}
+											prefix={currencySymbol}
 											locale={data.locale}
 											currency={currencyCode}
 											bind:value={modalMaintenanceFlatReward}
@@ -1968,7 +2277,7 @@
 									<span class="text-[11px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.feePerIncident')}</span>
 									<CurrencyInput
 										name="cancellationFeePerIncident"
-										prefix={currencyCode === 'IDR' ? 'Rp' : '$'}
+										prefix={currencySymbol}
 										locale={data.locale}
 										currency={currencyCode}
 										bind:value={modalCancellationFee}
@@ -1996,15 +2305,15 @@
 								<div class="flex flex-wrap gap-xs">
 									<button
 										type="button"
-										onclick={loadDefaultTaskRules}
-										class="px-2 py-1 rounded-button border border-stone bg-white text-xs font-medium text-ink hover:bg-ash transition-all shadow-2xs cursor-pointer"
+										onclick={importCatalogTasksToWorker}
+										class="px-2.5 py-1 rounded-button border border-stone bg-white text-xs font-medium text-ink hover:bg-ash transition-all shadow-2xs cursor-pointer"
 									>
-										{t('settings.bonus.loadDefaultTasks')}
+										{t('compensationCatalog.importFromCatalog')}
 									</button>
 									<button
 										type="button"
 										onclick={addTaskRule}
-										class="px-2 py-1 rounded-button bg-ink text-white text-xs font-medium hover:bg-ink/90 active:scale-95 transition-all shadow-2xs cursor-pointer inline-flex items-center gap-1"
+										class="px-2.5 py-1 rounded-button bg-ink text-white text-xs font-medium hover:bg-ink/90 active:scale-95 transition-all shadow-2xs cursor-pointer inline-flex items-center gap-1"
 									>
 										<span class="material-symbols-outlined text-[14px]">add</span>
 										<span>{t('settings.bonus.addTaskRule')}</span>
@@ -2014,6 +2323,17 @@
 						</div>
 
 						{#if modalTaskItemizedActive}
+							<div class="flex flex-wrap items-center gap-4 text-xs pt-2 border-t border-stone/60">
+								<span class="font-semibold text-secondary">{t('settings.bonus.payoutTrigger')}:</span>
+								<label class="inline-flex items-center gap-1.5 cursor-pointer text-ink">
+									<input type="radio" name="taskPayoutTriggerRadio" value="TicketFinalized" bind:group={modalTaskPayoutTrigger} class="text-ink focus:ring-0" />
+									<span>{t('settings.bonus.payoutTrigger.TicketFinalized')}</span>
+								</label>
+								<label class="inline-flex items-center gap-1.5 cursor-pointer text-ink">
+									<input type="radio" name="taskPayoutTriggerRadio" value="TaskCompleted" bind:group={modalTaskPayoutTrigger} class="text-ink focus:ring-0" />
+									<span>{t('settings.bonus.payoutTrigger.TaskCompleted')}</span>
+								</label>
+							</div>
 							{#if modalTaskRules.length === 0}
 								<p class="text-xs text-secondary italic py-2 mb-0">{t('settings.bonus.noTasksConfigured')}</p>
 							{:else}
@@ -2021,45 +2341,46 @@
 									{#each modalTaskRules as rule, index}
 										<div class="grid grid-cols-1 sm:grid-cols-[1.5fr_1.5fr_1fr_1.2fr_auto] gap-2 items-end rounded-lg border border-stone bg-ash/30 p-2.5">
 											<label class="space-y-1">
-												<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.taskLabel')}</span>
+												<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.bonus.taskLabel')}</span>
 												<input
 													type="text"
 													bind:value={rule.taskLabel}
 													placeholder="OS Reinstall"
-													class="w-full rounded-input border border-stone bg-white p-1.5 text-body-sm text-ink focus:border-ink focus:outline-none"
+													class="w-full h-9 rounded-input border border-stone bg-white px-2.5 text-body-sm text-ink focus:border-ink focus:outline-none"
 												/>
 											</label>
 											<label class="space-y-1">
-												<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.matcherKeyword')}</span>
+												<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.bonus.matcherKeyword')}</span>
 												<input
 													type="text"
 													bind:value={rule.matcherKeyword}
 													placeholder="OS,Windows"
-													class="w-full rounded-input border border-stone bg-white p-1.5 text-body-sm text-ink focus:border-ink focus:outline-none"
+													class="w-full h-9 rounded-input border border-stone bg-white px-2.5 text-body-sm text-ink focus:border-ink focus:outline-none"
 												/>
 											</label>
 											<div class="space-y-1">
-												<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.deviceCategory')}</span>
+												<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.bonus.deviceCategory')}</span>
 												<Dropdown
 													size="sm"
+													buttonClass="h-9"
 													bind:value={rule.deviceCategory}
 													options={[
 														{ value: 'Any', label: t('settings.bonus.deviceCategory.Any') },
 														{ value: 'Standard', label: t('settings.bonus.deviceCategory.Standard') },
-														{ value: 'Gaming', label: t('settings.bonus.deviceCategory.Gaming') }
+														{ value: 'Gaming', label: isItBlueprint ? t('settings.bonus.deviceCategory.Gaming') : t('settings.bonus.deviceCategory.Premium') }
 													]}
 												/>
 											</div>
-											<label class="space-y-1">
-												<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block">{t('settings.bonus.taskReward')}</span>
+											<div class="space-y-1">
+												<span class="text-[10.5px] font-bold uppercase tracking-wider text-secondary font-label-caps block leading-4">{t('settings.bonus.taskReward')}</span>
 												<CurrencyInput
 													bind:value={rule.rewardPerUnit}
-													prefix={currencyCode === 'IDR' ? 'Rp' : '$'}
+													prefix={currencySymbol}
 													locale={data.locale}
 													currency={currencyCode}
-													inputClass="p-1.5 text-body-sm"
+													inputClass="h-[34px] px-2 text-body-sm font-mono tabular-nums"
 												/>
-											</label>
+											</div>
 											<button
 												type="button"
 												onclick={() => removeTaskRule(index)}

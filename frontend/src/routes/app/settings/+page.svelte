@@ -8,7 +8,15 @@
 	import { apiAssetUrl, compressImage, isSupportedImageFile } from '$lib/media';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { formatEnhanceUnexpectedError } from '$lib/utils/http';
+	import {
+		getTaxPresets,
+		isPresetActive,
+		normalizeTaxMode,
+		taxInputFromPercent,
+		taxPercentFromInput
+	} from '$lib/utils/inventory-tax';
 	import { handlePhoneInput, handlePhonePaste } from '$lib/utils/phone';
+	import type { InventoryTaxMode } from '$lib/types/settings';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -76,6 +84,30 @@
 	let ticketDateFormat = $state(initialSettings().ticketDateFormat || 'yyyyMMdd');
 	let ticketStartNumber = $state(initialSettings().ticketStartNumber || 1);
 	let ticketMinDigits = $state(initialSettings().ticketMinDigits || 4);
+	let currencyCodeDraft = $state(initialSettings().currencyCode || 'IDR');
+	let inventoryTaxPercent = $state(initialSettings().inventoryDefaultTaxPercent ?? 11);
+	let inventoryTaxMode = $state<InventoryTaxMode>(normalizeTaxMode(initialSettings().inventoryDefaultTaxMode));
+	let inventoryTaxInput = $state<number | string>(
+		taxInputFromPercent(initialSettings().inventoryDefaultTaxPercent ?? 11, normalizeTaxMode(initialSettings().inventoryDefaultTaxMode))
+	);
+	const settingsTaxPresets = $derived(getTaxPresets(currencyCodeDraft));
+
+	function setInventoryTaxMode(nextMode: InventoryTaxMode) {
+		if (inventoryTaxMode === nextMode) return;
+		inventoryTaxMode = nextMode;
+		inventoryTaxInput = taxInputFromPercent(inventoryTaxPercent, nextMode);
+	}
+
+	function applyInventoryTaxPreset(percent: number) {
+		inventoryTaxPercent = percent;
+		inventoryTaxInput = taxInputFromPercent(percent, inventoryTaxMode);
+	}
+
+	function handleInventoryTaxInput(event: Event) {
+		const raw = (event.currentTarget as HTMLInputElement).value;
+		inventoryTaxInput = raw;
+		inventoryTaxPercent = taxPercentFromInput(raw, inventoryTaxMode);
+	}
 
 	const todayStamp = $derived.by(() => {
 		const now = new Date();
@@ -94,6 +126,10 @@
 		ticketDateFormat = settings.ticketDateFormat || 'yyyyMMdd';
 		ticketStartNumber = settings.ticketStartNumber || 1;
 		ticketMinDigits = settings.ticketMinDigits || 4;
+		currencyCodeDraft = settings.currencyCode || 'IDR';
+		inventoryTaxPercent = settings.inventoryDefaultTaxPercent ?? 11;
+		inventoryTaxMode = normalizeTaxMode(settings.inventoryDefaultTaxMode);
+		inventoryTaxInput = taxInputFromPercent(inventoryTaxPercent, inventoryTaxMode);
 	});
 
 	function confirmRiskyChange(event: SubmitEvent) {
@@ -281,6 +317,13 @@
 			<span>{t('settings.notificationsWebhooks')}</span>
 		</a>
 		<a
+			href="/app/settings/compensation-catalog"
+			class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-caption font-medium whitespace-nowrap transition-all shrink-0 text-secondary hover:text-primary hover:bg-ash cursor-pointer"
+		>
+			<span class="material-symbols-outlined text-[17px]">payments</span>
+			<span>{t('compensationCatalog.navLabel')}</span>
+		</a>
+		<a
 			href="/app/settings/security"
 			class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-caption font-medium whitespace-nowrap transition-all shrink-0 text-secondary hover:text-primary hover:bg-ash cursor-pointer"
 		>
@@ -366,7 +409,7 @@
 
 					<div class="space-y-1 block">
 						<label class="text-label-caps font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block" for="currencyCode">{t('settings.currency')}</label>
-						<Dropdown name="currencyCode" value={settings.currencyCode ?? 'IDR'} options={[
+						<Dropdown name="currencyCode" bind:value={currencyCodeDraft} options={[
 							{ value: 'IDR', label: t('settings.currencyIdr') },
 							{ value: 'USD', label: t('settings.currencyUsd') },
 							{ value: 'SGD', label: t('settings.currencySgd') },
@@ -379,25 +422,78 @@
 
 					<!-- Inventory Pricing Defaults Box -->
 					<div class="rounded-xl border border-stone bg-ash/30 p-md space-y-md">
-						<div>
-							<h4 class="font-subheading text-body font-semibold text-primary">{t('settings.inventoryPricing')}</h4>
-							<p class="text-caption text-secondary mt-0.5">{t('inventory.settingsHint') ?? 'Configure pricing calculation, tax, and decimal policies.'}</p>
+						<input type="hidden" name="inventoryDefaultTaxPercent" value={inventoryTaxPercent} />
+						<input type="hidden" name="inventoryDefaultTaxMode" value={inventoryTaxMode} />
+						<div class="flex flex-wrap items-start justify-between gap-2">
+							<div>
+								<h4 class="font-subheading text-body font-semibold text-primary">{t('settings.inventoryPricing')}</h4>
+								<p class="text-caption text-secondary mt-0.5">{t('inventory.settingsHint')}</p>
+							</div>
+							<div class="inline-flex rounded-lg border border-stone bg-white p-0.5 text-xs font-semibold shrink-0" role="group" aria-label={t('inventory.taxMode')}>
+								<button
+									type="button"
+									onclick={() => setInventoryTaxMode('Percentage')}
+									class="px-2.5 py-1 rounded-md cursor-pointer transition-colors {inventoryTaxMode === 'Percentage' ? 'bg-ink text-white' : 'text-secondary hover:text-ink'}"
+								>
+									{t('inventory.taxMode.Percentage')} (%)
+								</button>
+								<button
+									type="button"
+									onclick={() => setInventoryTaxMode('Multiplier')}
+									class="px-2.5 py-1 rounded-md cursor-pointer transition-colors {inventoryTaxMode === 'Multiplier' ? 'bg-ink text-white' : 'text-secondary hover:text-ink'}"
+								>
+									{t('inventory.taxMode.Multiplier')} (×)
+								</button>
+							</div>
 						</div>
-						<div class="grid grid-cols-1 sm:grid-cols-3 gap-md">
-							<label class="space-y-1 block">
-								<span class="text-label-caps font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block">{t('settings.inventoryDefaultTaxPercent')}</span>
-								<input name="inventoryDefaultTaxPercent" type="number" min="0" max="100" step="0.01" value={settings.inventoryDefaultTaxPercent ?? 11} class="w-full h-10 rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" />
+						<div class="grid grid-cols-1 sm:grid-cols-3 gap-md items-end">
+							<label class="space-y-1.5 block">
+								<span class="text-label-caps font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">
+									{inventoryTaxMode === 'Multiplier' ? t('settings.inventoryDefaultTaxMultiplier') : t('settings.inventoryDefaultTaxPercent')}
+								</span>
+								<input
+									type="number"
+									min={inventoryTaxMode === 'Multiplier' ? '1' : '0'}
+									max={inventoryTaxMode === 'Multiplier' ? '2' : '100'}
+									step={inventoryTaxMode === 'Multiplier' ? '0.005' : '0.01'}
+									value={inventoryTaxInput}
+									oninput={handleInventoryTaxInput}
+									class="w-full h-10 rounded-input border border-stone bg-white px-3 py-2 text-body-sm font-mono tabular-nums text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+								/>
 							</label>
-							<label class="space-y-1 block">
-								<span class="text-label-caps font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block">{t('settings.inventoryRoundingIncrement')}</span>
-								<input name="inventoryRoundingIncrement" type="number" min="1" step="1" value={settings.inventoryRoundingIncrement ?? 1000} class="w-full h-10 rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" />
+							<label class="space-y-1.5 block">
+								<span class="text-label-caps font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('settings.inventoryRoundingIncrement')}</span>
+								<input name="inventoryRoundingIncrement" type="number" min="1" step="1" value={settings.inventoryRoundingIncrement ?? 1000} class="w-full h-10 rounded-input border border-stone bg-white px-3 py-2 text-body-sm font-mono tabular-nums text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" />
 							</label>
-							<label class="space-y-1 block">
-								<span class="text-label-caps font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block">{t('settings.inventoryDefaultUnit')}</span>
+							<label class="space-y-1.5 block">
+								<span class="text-label-caps font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('settings.inventoryDefaultUnit')}</span>
 								<input name="inventoryDefaultUnit" value={settings.inventoryDefaultUnit ?? 'pcs'} class="w-full h-10 rounded-input border border-stone bg-white px-3 py-2 text-body-sm text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" />
 							</label>
 						</div>
-						<div class="flex flex-wrap gap-md text-body-sm text-secondary pt-1">
+						<div class="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+							<div class="flex flex-wrap items-center gap-1.5">
+								<span class="text-[11px] font-medium text-secondary">{t('inventory.taxPresets')}:</span>
+								{#each settingsTaxPresets as preset}
+									{@const active = isPresetActive(inventoryTaxPercent, preset.percent)}
+									<button
+										type="button"
+										onclick={() => applyInventoryTaxPreset(preset.percent)}
+										class="px-2 py-0.5 rounded-md border text-[11px] font-medium cursor-pointer transition-colors {active ? 'border-ink bg-ink text-white' : 'border-stone bg-white text-secondary hover:text-ink hover:bg-ash'}"
+									>
+										{t(preset.labelKey)}
+									</button>
+								{/each}
+							</div>
+							<span class="text-[11px] font-mono tabular-nums text-secondary">
+								{inventoryTaxMode === 'Multiplier'
+									? `= ${Number(inventoryTaxPercent.toFixed(2))}%`
+									: `×${Number((1 + inventoryTaxPercent / 100).toFixed(4))}`}
+							</span>
+						</div>
+						<p class="text-[11px] text-secondary">
+							{currencyCodeDraft === 'IDR' ? t('settings.inventoryTaxPolicyHint') : t('settings.inventoryTaxPolicyHintGeneric')}
+						</p>
+						<div class="flex flex-wrap gap-md text-body-sm text-secondary pt-1 border-t border-stone/60">
 							<label class="flex items-center gap-sm cursor-pointer select-none">
 								<input name="inventoryAllowDecimalQuantity" type="checkbox" checked={settings.inventoryAllowDecimalQuantity ?? true} class="rounded border-stone text-primary focus:ring-primary" />
 								<span class="font-medium text-primary text-body-sm">{t('settings.inventoryAllowDecimalQuantity')}</span>

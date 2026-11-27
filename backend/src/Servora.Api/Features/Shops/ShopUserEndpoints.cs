@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
@@ -21,7 +22,8 @@ public static class ShopUserEndpoints
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     public sealed record StaffUserDto(int Id, string FullName, string Email, IReadOnlyCollection<string> Roles, string EmploymentType = "FullTime");
@@ -34,7 +36,9 @@ public static class ShopUserEndpoints
         string BasePayMode,
         decimal BaseHourlyRate,
         IReadOnlyCollection<WageTierBracket> TieredRates,
-        IReadOnlyCollection<WorkerBonusConfigDto> BonusConfigs);
+        IReadOnlyCollection<WorkerBonusConfigDto> BonusConfigs,
+        int? CompensationTemplateId = null,
+        FreelancePayPolicy? PayPolicy = null);
     public sealed record ShopUserDto(
         int Id,
         int UserId,
@@ -57,7 +61,9 @@ public static class ShopUserEndpoints
         string BasePayMode,
         decimal BaseHourlyRate,
         IReadOnlyCollection<WageTierBracket> TieredRates,
-        IReadOnlyCollection<UpsertWorkerBonusConfigItem> BonusConfigs);
+        IReadOnlyCollection<UpsertWorkerBonusConfigItem> BonusConfigs,
+        int? CompensationTemplateId = null,
+        FreelancePayPolicy? PayPolicy = null);
 
     public static void MapEndpoint(IEndpointRouteBuilder app)
     {
@@ -575,6 +581,20 @@ public static class ShopUserEndpoints
             ? parsedMode
             : BasePayMode.TieredDaily;
 
+        int? validTemplateId = null;
+        if (request.CompensationTemplateId.HasValue && request.CompensationTemplateId.Value > 0)
+        {
+            var templateExists = await context.CompensationTemplates
+                .AsNoTracking()
+                .AnyAsync(t => t.Id == request.CompensationTemplateId.Value && t.ShopId == shopId, cancellationToken);
+            if (templateExists)
+            {
+                validTemplateId = request.CompensationTemplateId.Value;
+            }
+        }
+
+        var payPolicyJson = JsonSerializer.Serialize(request.PayPolicy ?? new FreelancePayPolicy(), JsonOptions);
+
         var profile = shopUser.FreelanceProfile;
         if (profile is null)
         {
@@ -582,18 +602,22 @@ public static class ShopUserEndpoints
             {
                 ShopId = shopId,
                 ShopUserId = shopUser.Id,
+                CompensationTemplateId = validTemplateId,
                 BasePayMode = basePayMode,
                 BaseHourlyRate = request.BaseHourlyRate,
-                TieredRatesJson = JsonSerializer.Serialize(brackets, JsonOptions)
+                TieredRatesJson = JsonSerializer.Serialize(brackets, JsonOptions),
+                PayPolicyJson = payPolicyJson
             };
             context.FreelanceProfiles.Add(profile);
             await context.SaveChangesAsync(cancellationToken);
         }
         else
         {
+            profile.CompensationTemplateId = validTemplateId;
             profile.BasePayMode = basePayMode;
             profile.BaseHourlyRate = request.BaseHourlyRate;
             profile.TieredRatesJson = JsonSerializer.Serialize(brackets, JsonOptions);
+            profile.PayPolicyJson = payPolicyJson;
         }
 
         var bonusTypesByCode = await context.BonusTypes
@@ -900,6 +924,8 @@ public static class ShopUserEndpoints
             profile.BasePayMode.ToString(),
             profile.BaseHourlyRate,
             brackets,
-            configs);
+            configs,
+            profile.CompensationTemplateId,
+            TieredWageCalculator.ParsePayPolicy(profile.PayPolicyJson));
     }
 }

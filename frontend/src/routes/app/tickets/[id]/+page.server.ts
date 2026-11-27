@@ -9,13 +9,13 @@ import type { CustomerLocation } from '$lib/types/maintenance';
 import type { GeneratedWhatsAppMessage, TicketApproval, TicketDetail, TicketHistory, TicketPayment, TicketWorkItem, WorkItemType } from '$lib/types/service-tickets';
 import type { TicketPaymentLinksResponse } from '$lib/types/payments';
 import type { ServiceTemplate, TicketChecklistItem } from '$lib/types/service-templates';
-import type { StaffUser } from '$lib/types/shop-users';
+import type { BonusTaskDefinition, StaffUser } from '$lib/types/shop-users';
 
 export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 	const token = cookies.get('servora_session');
 	const id = Number(params.id);
 
-	const [ticket, history, approvals, workItems, payment, paymentLinks, inventoryItems, inventoryUsages, staff, serviceTemplates, checklistItems, locations, allAssets] = await Promise.all([
+	const [ticket, history, approvals, workItems, payment, paymentLinks, inventoryItems, inventoryUsages, staff, serviceTemplates, checklistItems, locations, allAssets, bonusTasks] = await Promise.all([
 		serverApiRequest<TicketDetail>(fetch, `/service-tickets/${id}`, { token }),
 		serverApiRequest<TicketHistory[]>(fetch, `/service-tickets/${id}/history`, { token }),
 		serverApiRequest<TicketApproval[]>(fetch, `/service-tickets/${id}/approvals`, { token }),
@@ -39,7 +39,8 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 		serverApiRequest<ServiceTemplate[]>(fetch, '/service-templates', { token }).catch(() => []),
 		serverApiRequest<TicketChecklistItem[]>(fetch, `/service-tickets/${id}/checklist`, { token }).catch(() => []),
 		serverApiRequest<CustomerLocation[]>(fetch, '/locations', { token }).catch(() => []),
-		serverApiRequest<Device[]>(fetch, '/service-assets', { token }).catch(() => [])
+		serverApiRequest<Device[]>(fetch, '/service-assets', { token }).catch(() => []),
+		serverApiRequest<BonusTaskDefinition[]>(fetch, '/bonus-tasks', { token }).catch(() => [])
 	]);
 
 	return {
@@ -56,6 +57,7 @@ export const load: PageServerLoad = async ({ fetch, cookies, params }) => {
 		checklistItems,
 		locations,
 		allAssets,
+		bonusTasks,
 		apiBaseUrl: env.PUBLIC_API_BASE_URL ?? 'http://localhost:5051/api/v1'
 	};
 };
@@ -333,10 +335,15 @@ export const actions: Actions = {
 		const title = String(form.get('title') ?? '').trim();
 		const description = nullable(form.get('description'));
 		const quantity = parseOptionalAmount(form.get('quantity'));
-		const unitPrice = parseOptionalAmount(form.get('unitPrice')) ?? 0;
+		const isInternalOnly = form.get('isInternalOnly') === 'on' || form.get('isInternalOnly') === 'true';
+		const unitPrice = isInternalOnly ? 0 : (parseOptionalAmount(form.get('unitPrice')) ?? 0);
 		const approvalRaw = nullable(form.get('approvalRequestId'));
 		const approvalRequestId = approvalRaw ? Number(approvalRaw) : null;
 		const isCompleted = form.get('isCompleted') === 'on' || form.get('isCompleted') === 'true';
+		const bonusTaskKey = nullable(form.get('bonusTaskKey'));
+		const assignedTechRaw = nullable(form.get('assignedTechnicianUserId'));
+		const assignedTechnicianUserId = assignedTechRaw && Number.isFinite(Number(assignedTechRaw)) && Number(assignedTechRaw) > 0 ? Number(assignedTechRaw) : null;
+		const deviceCategoryOverride = nullable(form.get('deviceCategoryOverride'));
 
 		if (!['Service', 'NonStockPart', 'Fee'].includes(itemType)) {
 			return fail(400, { success: false, messageKey: 'tickets.workItems.typeInvalid', action: 'workItem', variant: 'error' });
@@ -358,7 +365,11 @@ export const actions: Actions = {
 			quantity,
 			unitPrice,
 			isCompleted,
-			approvalRequestId: approvalRequestId && Number.isFinite(approvalRequestId) && approvalRequestId > 0 ? approvalRequestId : null
+			approvalRequestId: approvalRequestId && Number.isFinite(approvalRequestId) && approvalRequestId > 0 ? approvalRequestId : null,
+			bonusTaskKey,
+			assignedTechnicianUserId,
+			deviceCategoryOverride: deviceCategoryOverride && deviceCategoryOverride !== 'Auto' ? deviceCategoryOverride : null,
+			isInternalOnly
 		}, { ok: true, action: 'workItem', messageKey: 'tickets.workItems.created' });
 	},
 	updateWorkItem: async ({ request, fetch, cookies, params }) => {
@@ -368,8 +379,13 @@ export const actions: Actions = {
 		const title = String(form.get('title') ?? '').trim();
 		const description = nullable(form.get('description'));
 		const quantity = parseOptionalAmount(form.get('quantity'));
-		const unitPrice = parseOptionalAmount(form.get('unitPrice')) ?? 0;
+		const isInternalOnly = form.get('isInternalOnly') === 'on' || form.get('isInternalOnly') === 'true';
+		const unitPrice = isInternalOnly ? 0 : (parseOptionalAmount(form.get('unitPrice')) ?? 0);
 		const isCompleted = form.get('isCompleted') === 'on' || form.get('isCompleted') === 'true';
+		const bonusTaskKey = nullable(form.get('bonusTaskKey'));
+		const assignedTechRaw = nullable(form.get('assignedTechnicianUserId'));
+		const assignedTechnicianUserId = assignedTechRaw && Number.isFinite(Number(assignedTechRaw)) && Number(assignedTechRaw) > 0 ? Number(assignedTechRaw) : null;
+		const deviceCategoryOverride = nullable(form.get('deviceCategoryOverride'));
 
 		if (!Number.isFinite(workItemId) || workItemId <= 0) {
 			return fail(400, { success: false, messageKey: 'tickets.detail.error', action: 'workItemUpdate', variant: 'error' });
@@ -393,7 +409,11 @@ export const actions: Actions = {
 			description,
 			quantity,
 			unitPrice,
-			isCompleted
+			isCompleted,
+			bonusTaskKey,
+			assignedTechnicianUserId,
+			deviceCategoryOverride: deviceCategoryOverride && deviceCategoryOverride !== 'Auto' ? deviceCategoryOverride : null,
+			isInternalOnly
 		}, { ok: true, action: 'workItemUpdate', messageKey: 'tickets.workItems.updated' });
 	},
 	deleteWorkItem: async ({ request, fetch, cookies, params }) => {
@@ -499,16 +519,40 @@ export const actions: Actions = {
 	applyTemplate: async ({ request, fetch, cookies, params }) => {
 		const form = await request.formData();
 		const templateId = Number(form.get('templateId'));
+		const replaceExisting = form.get('replaceExisting') === 'on' || form.get('replaceExisting') === 'true';
 		if (!Number.isFinite(templateId) || templateId <= 0) return fail(400, { success: false, messageKey: 'tickets.checklist.templateRequired', action: 'checklist', variant: 'error' });
 		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}/apply-template`, 'POST', {
-			templateId
+			templateId,
+			replaceExisting
 		}, { ok: true, action: 'checklist', messageKey: 'tickets.checklist.templateApplied' });
+	},
+	addChecklistItem: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const title = String(form.get('title') ?? '').trim();
+		const description = nullable(form.get('description'));
+		if (!title) return fail(400, { success: false, messageKey: 'tickets.checklist.titleRequired', action: 'checklist', variant: 'error' });
+		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}/checklist`, 'POST', {
+			title,
+			description
+		}, { ok: true, action: 'checklist', messageKey: 'tickets.checklist.itemAdded' });
 	},
 	updateChecklistItem: async ({ request, fetch, cookies, params }) => {
 		const form = await request.formData();
 		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}/checklist/${form.get('checklistItemId')}`, 'PUT', {
 			isCompleted: form.get('isCompleted') === 'on'
 		}, { ok: true, action: 'checklist', messageKey: 'tickets.checklist.updated' });
+	},
+	deleteChecklistItem: async ({ request, fetch, cookies, params }) => {
+		const form = await request.formData();
+		const checklistItemId = Number(form.get('checklistItemId'));
+		if (!Number.isFinite(checklistItemId) || checklistItemId <= 0) {
+			return fail(400, { success: false, messageKey: 'tickets.detail.error', action: 'checklist', variant: 'error' });
+		}
+		return submitJson(fetch, cookies.get('servora_session'), `/service-tickets/${params.id}/checklist/${checklistItemId}`, 'DELETE', {}, {
+			ok: true,
+			action: 'checklist',
+			messageKey: 'tickets.checklist.itemDeleted'
+		});
 	},
 	reserveInventory: async ({ request, fetch, cookies, params }) => {
 		const form = await request.formData();

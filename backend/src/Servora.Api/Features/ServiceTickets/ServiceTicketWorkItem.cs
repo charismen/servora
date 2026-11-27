@@ -22,6 +22,14 @@ public class ServiceTicketWorkItem : IAuditableEntity
     public decimal UnitPrice { get; set; }
     public WorkItemStatus Status { get; set; } = WorkItemStatus.Approved;
     public bool IsCompleted { get; set; }
+    public string? BonusTaskKey { get; set; }
+    public int? AssignedTechnicianUserId { get; set; }
+    public ApplicationUser? AssignedTechnicianUser { get; set; }
+    public int? CompletedByUserId { get; set; }
+    public ApplicationUser? CompletedByUser { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public string? DeviceCategoryOverride { get; set; }
+    public bool IsInternalOnly { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }
@@ -55,9 +63,12 @@ public class ServiceTicketWorkItemConfiguration : IEntityTypeConfiguration<Servi
         builder.Property(item => item.Quantity).HasPrecision(18, 2);
         builder.Property(item => item.UnitPrice).HasPrecision(18, 2);
         builder.Property(item => item.Status).HasConversion<string>().IsRequired().HasMaxLength(30);
+        builder.Property(item => item.BonusTaskKey).HasMaxLength(60);
+        builder.Property(item => item.DeviceCategoryOverride).HasMaxLength(20);
 
         builder.HasIndex(item => new { item.ShopId, item.ServiceTicketId, item.Status });
         builder.HasIndex(item => item.ApprovalRequestId);
+        builder.HasIndex(item => new { item.ShopId, item.BonusTaskKey, item.IsCompleted });
 
         builder.HasOne(item => item.ServiceTicket)
             .WithMany()
@@ -72,6 +83,16 @@ public class ServiceTicketWorkItemConfiguration : IEntityTypeConfiguration<Servi
         builder.HasOne(item => item.CreatedByUser)
             .WithMany()
             .HasForeignKey(item => item.CreatedByUserId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasOne(item => item.AssignedTechnicianUser)
+            .WithMany()
+            .HasForeignKey(item => item.AssignedTechnicianUserId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasOne(item => item.CompletedByUser)
+            .WithMany()
+            .HasForeignKey(item => item.CompletedByUserId)
             .OnDelete(DeleteBehavior.SetNull);
     }
 }

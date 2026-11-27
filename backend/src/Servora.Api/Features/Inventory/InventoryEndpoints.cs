@@ -114,12 +114,18 @@ public static class InventoryEndpoints
     public sealed record ReserveItemRequest(int InventoryItemId, decimal Quantity, string? Notes);
     public sealed record QuantityRequest(decimal? Quantity, string? Reason);
     public sealed record DeleteItemResultDto(string Action);
-    private sealed record InventoryPricingSettings(decimal DefaultTaxPercent, decimal RoundingIncrement, string DefaultUnit);
+    public sealed record NextSkuDto(string Sku, string Prefix, int Sequence);
+    private sealed record InventoryPricingSettings(decimal DefaultTaxPercent, InventoryTaxMode DefaultTaxMode, decimal RoundingIncrement, string DefaultUnit);
 
     public static void MapEndpoint(IEndpointRouteBuilder app)
     {
         app.MapGet("/inventory/items", ListItemsAsync)
             .WithName("GetInventoryItems")
+            .WithOpenApi()
+            .RequireAuthorization(ApplicationPermissions.InventoryRead);
+
+        app.MapGet("/inventory/items/next-sku", GetNextSkuAsync)
+            .WithName("GetNextInventorySku")
             .WithOpenApi()
             .RequireAuthorization(ApplicationPermissions.InventoryRead);
 
@@ -260,6 +266,31 @@ public static class InventoryEndpoints
 
         if (page.HasValue || pageSize.HasValue) return Results.Ok(new InventoryItemsPageDto(items, totalCount, currentPage, currentPageSize));
         return Results.Ok(items);
+    }
+
+    private static async Task<IResult> GetNextSkuAsync(int? categoryId, AppDbContext context, IShopContext shopContext, CancellationToken cancellationToken)
+    {
+        var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
+        string? categoryName = null;
+        if (categoryId.HasValue)
+        {
+            categoryName = await context.InventoryCategories
+                .AsNoTracking()
+                .Where(category => category.Id == categoryId.Value && category.ShopId == shopId)
+                .Select(category => category.Name)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        var prefix = InventorySkuGenerator.BuildPrefix(categoryName);
+        var head = prefix + "-";
+        var existingSkus = await context.InventoryItems
+            .AsNoTracking()
+            .Where(item => item.ShopId == shopId && item.Sku.StartsWith(head))
+            .Select(item => item.Sku)
+            .ToListAsync(cancellationToken);
+
+        var (sku, normalizedPrefix, sequence) = InventorySkuGenerator.BuildNextSku(prefix, existingSkus);
+        return Results.Ok(new NextSkuDto(sku, normalizedPrefix, sequence));
     }
 
     private static async Task<IResult> GetItemAsync(int id, AppDbContext context, IShopContext shopContext, ClaimsPrincipal principal, CancellationToken cancellationToken)
@@ -939,8 +970,13 @@ public static class InventoryEndpoints
 
         string Value(string key) => values.GetValueOrDefault(key) ?? ShopProfileSettingKeys.Defaults[key];
 
+        var taxMode = string.Equals(Value(ShopProfileSettingKeys.InventoryDefaultTaxMode), nameof(InventoryTaxMode.Multiplier), StringComparison.OrdinalIgnoreCase)
+            ? InventoryTaxMode.Multiplier
+            : InventoryTaxMode.Percentage;
+
         return new InventoryPricingSettings(
             DecimalValue(ShopProfileSettingKeys.InventoryDefaultTaxPercent),
+            taxMode,
             DecimalValue(ShopProfileSettingKeys.InventoryRoundingIncrement),
             string.IsNullOrWhiteSpace(Value(ShopProfileSettingKeys.InventoryDefaultUnit)) ? "pcs" : Value(ShopProfileSettingKeys.InventoryDefaultUnit));
     }

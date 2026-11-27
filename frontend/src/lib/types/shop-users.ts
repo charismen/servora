@@ -1,5 +1,68 @@
 export type EmploymentType = 'FullTime' | 'Freelance';
-export type BasePayMode = 'Hourly' | 'TieredDaily' | 'TieredDailyAverage' | 'TieredMonthly';
+export type BasePayMode =
+	| 'Hourly'
+	| 'TieredDaily'
+	| 'TieredDailyAverage'
+	| 'TieredMonthly'
+	| 'FixedDaily'
+	| 'FixedMonthly'
+	| 'CommissionOnly'
+	| 'RevenueShare';
+
+export type FallbackPayStrategy = 'ProratedHourly' | 'LowerTierFloor' | 'Zero';
+export type TaskPayoutTrigger = 'TicketFinalized' | 'TaskCompleted';
+
+export interface FreelancePayPolicy {
+	fixedDailyRate?: number;
+	fixedMonthlySalary?: number;
+	standardWorkDaysPerMonth?: number;
+	prorateMonthlyByAttendance?: boolean;
+	revenueSharePercent?: number;
+	fallbackStrategy?: FallbackPayStrategy;
+	overtimeThresholdHoursPerDay?: number | null;
+	overtimeMultiplier?: number;
+	weekendMultiplier?: number;
+	taskBonusTrigger?: TaskPayoutTrigger;
+}
+
+export interface BonusTaskDefinition {
+	id: number;
+	taskKey: string;
+	label: string;
+	description?: string | null;
+	category?: string | null;
+	defaultStandardRate: number;
+	defaultGamingRate: number;
+	defaultCustomerPrice: number;
+	defaultWorkItemType: 'Service' | 'NonStockPart' | 'Fee' | string;
+	defaultIsInternalOnly: boolean;
+	legacyKeywords?: string | null;
+	isActive: boolean;
+	sortOrder: number;
+	createdAt?: string;
+	updatedAt?: string | null;
+}
+
+export interface TemplateBonusConfig {
+	bonusTypeCode: string;
+	isActive: boolean;
+	parameters: Record<string, unknown>;
+}
+
+export interface CompensationTemplate {
+	id: number;
+	name: string;
+	description?: string | null;
+	basePayMode: BasePayMode;
+	baseHourlyRate: number;
+	tieredRates: WageTierBracket[];
+	payPolicy: FreelancePayPolicy;
+	bonusConfigs: TemplateBonusConfig[];
+	isActive: boolean;
+	sortOrder: number;
+	createdAt?: string;
+	updatedAt?: string | null;
+}
 
 export interface CompletionMilestone {
 	minUnits: number;
@@ -42,9 +105,11 @@ export interface WorkerBonusConfig {
 export interface FreelanceProfile {
 	id: number;
 	shopUserId: number;
+	compensationTemplateId?: number | null;
 	basePayMode: BasePayMode;
 	baseHourlyRate: number;
 	tieredRates: WageTierBracket[];
+	payPolicy?: FreelancePayPolicy | null;
 	bonusConfigs: WorkerBonusConfig[];
 }
 

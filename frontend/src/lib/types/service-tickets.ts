@@ -158,6 +158,14 @@ export interface TicketWorkItem {
 	lineTotal: number;
 	status: WorkItemStatus | string;
 	isCompleted: boolean;
+	bonusTaskKey?: string | null;
+	assignedTechnicianUserId?: number | null;
+	assignedTechnicianName?: string | null;
+	completedByUserId?: number | null;
+	completedByName?: string | null;
+	completedAt?: string | null;
+	deviceCategoryOverride?: 'Auto' | 'Standard' | 'Gaming' | string | null;
+	isInternalOnly?: boolean;
 	createdAt: string;
 	updatedAt?: string | null;
 }

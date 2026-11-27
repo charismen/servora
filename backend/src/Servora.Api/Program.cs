@@ -377,6 +377,8 @@ ReportsEndpoints.MapEndpoint(versionedGroup);
 ShopUserEndpoints.MapEndpoint(versionedGroup);
 AttendanceEndpoints.MapEndpoint(versionedGroup);
 PayrollEndpoints.MapEndpoint(versionedGroup);
+BonusTaskDefinitionEndpoints.MapEndpoint(versionedGroup);
+CompensationTemplateEndpoints.MapEndpoint(versionedGroup);
 AssetEndpoints.MapEndpoint(versionedGroup);
 
 app.MapHub<Servora.Api.Infrastructure.Notifications.NotificationHub>("/hubs/notifications");

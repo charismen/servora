@@ -97,6 +97,8 @@ public class AppDbContext : IdentityDbContext<
     public DbSet<FreelanceProfile> FreelanceProfiles => Set<FreelanceProfile>();
     public DbSet<BonusType> BonusTypes => Set<BonusType>();
     public DbSet<WorkerBonusConfig> WorkerBonusConfigs => Set<WorkerBonusConfig>();
+    public DbSet<BonusTaskDefinition> BonusTaskDefinitions => Set<BonusTaskDefinition>();
+    public DbSet<CompensationTemplate> CompensationTemplates => Set<CompensationTemplate>();
     public DbSet<PayrollAdjustment> PayrollAdjustments => Set<PayrollAdjustment>();
     public DbSet<AttendanceRecord> Attendances => Set<AttendanceRecord>();
     public DbSet<AssetCategory> AssetCategories => Set<AssetCategory>();

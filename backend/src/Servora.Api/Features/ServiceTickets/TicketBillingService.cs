@@ -153,7 +153,7 @@ public static class TicketBillingService
     {
         var approvedWorkItems = await context.ServiceTicketWorkItems
             .AsNoTracking()
-            .Where(item => item.ShopId == shopId && item.ServiceTicketId == ticket.Id && item.Status == WorkItemStatus.Approved)
+            .Where(item => item.ShopId == shopId && item.ServiceTicketId == ticket.Id && item.Status == WorkItemStatus.Approved && !item.IsInternalOnly)
             .Select(item => new { item.Quantity, item.UnitPrice })
             .ToListAsync(cancellationToken);
 

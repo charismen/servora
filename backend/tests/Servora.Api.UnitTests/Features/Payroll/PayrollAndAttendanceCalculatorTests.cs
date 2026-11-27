@@ -477,4 +477,116 @@ public class PayrollAndAttendanceCalculatorTests
         result.TotalBonusAmount.Should().Be(25_000m);
         result.ReferenceNumbers.Should().Equal(["T-DUP-01"]);
     }
+
+    [Fact]
+    public void TieredWageCalculator_SupportsNewPayModesAndPolicyModifiers()
+    {
+        var shifts = new List<AttendanceRecord>
+        {
+            // Monday (weekday) 10h
+            new()
+            {
+                WorkDate = new DateOnly(2026, 10, 12),
+                CheckInAt = new DateTime(2026, 10, 12, 8, 0, 0),
+                CheckOutAt = new DateTime(2026, 10, 12, 18, 0, 0),
+                TotalHours = 10.0m,
+                Status = AttendanceStatus.Approved
+            },
+            // Saturday (weekend) 6h
+            new()
+            {
+                WorkDate = new DateOnly(2026, 10, 17),
+                CheckInAt = new DateTime(2026, 10, 17, 9, 0, 0),
+                CheckOutAt = new DateTime(2026, 10, 17, 15, 0, 0),
+                TotalHours = 6.0m,
+                Status = AttendanceStatus.Approved
+            }
+        };
+
+        // FixedDaily with 1.5x weekend multiplier: 100k + 150k = 250k
+        var fixedDaily = TieredWageCalculator.Calculate(
+            BasePayMode.FixedDaily,
+            0m,
+            null,
+            shifts,
+            new FreelancePayPolicy(FixedDailyRate: 100_000m, WeekendMultiplier: 1.5m));
+        fixedDaily.BaseCalculatedWage.Should().Be(250_000m);
+
+        // FixedMonthly prorated (2 / 20 days of 2,000,000 = 200,000)
+        var fixedMonthly = TieredWageCalculator.Calculate(
+            BasePayMode.FixedMonthly,
+            0m,
+            null,
+            shifts,
+            new FreelancePayPolicy(FixedMonthlySalary: 2_000_000m, StandardWorkDaysPerMonth: 20, ProrateMonthlyByAttendance: true));
+        fixedMonthly.BaseCalculatedWage.Should().Be(200_000m);
+
+        // CommissionOnly -> 0 base wage
+        var commissionOnly = TieredWageCalculator.Calculate(BasePayMode.CommissionOnly, 50_000m, null, shifts);
+        commissionOnly.BaseCalculatedWage.Should().Be(0m);
+
+        // RevenueShare -> 20% of 1,500,000 = 300,000
+        var revShare = TieredWageCalculator.Calculate(
+            BasePayMode.RevenueShare,
+            0m,
+            null,
+            shifts,
+            new FreelancePayPolicy(RevenueSharePercent: 20m),
+            completedServiceRevenue: 1_500_000m);
+        revShare.BaseCalculatedWage.Should().Be(300_000m);
+
+        // Hourly with overtime (>8h @ 1.5x) and weekend (2.0x):
+        // Weekday: 8h * 10k + 2h * 15k = 110k; Weekend: 6h * 20k = 120k; Total = 230k
+        var hourlyMod = TieredWageCalculator.Calculate(
+            BasePayMode.Hourly,
+            10_000m,
+            null,
+            shifts,
+            new FreelancePayPolicy(OvertimeThresholdHoursPerDay: 8m, OvertimeMultiplier: 1.5m, WeekendMultiplier: 2.0m));
+        hourlyMod.BaseCalculatedWage.Should().Be(230_000m);
+    }
+
+    [Fact]
+    public void TaskItemizedBonusEvaluator_EvaluateCombined_PrioritizesExplicitWorkItemsAndPreventsDoubleCounting()
+    {
+        const string paramsJson = """
+            {
+              "payoutTrigger": "TaskCompleted",
+              "rules": [
+                {
+                  "taskKey": "CLEANING_REPASTE",
+                  "taskLabel": "Cleaning & Thermal Repasting",
+                  "matcherKeyword": "Cleaning,Repaste",
+                  "deviceCategory": "Standard",
+                  "rewardPerUnit": 25000
+                },
+                {
+                  "taskKey": "CLEANING_REPASTE",
+                  "taskLabel": "Cleaning & Thermal Repasting",
+                  "matcherKeyword": "Cleaning,Repaste",
+                  "deviceCategory": "Gaming",
+                  "rewardPerUnit": 50000
+                }
+              ]
+            }
+            """;
+
+        var explicitItems = new List<TaskWorkItemEntry>
+        {
+            // Explicit override forces Gaming tier (50,000 * 2 = 100,000) even on a ThinkPad
+            new("T-EXP-01", "CLEANING_REPASTE", "Thermal Service", 2m, "Gaming", new Device { Brand = "Lenovo", Model = "ThinkPad" }, null, null)
+        };
+
+        var legacyTickets = new List<TaskTicketCandidate>
+        {
+            // Same ticket also has a matching checklist item -> must NOT double-count
+            new("T-EXP-01", new Device { Brand = "Lenovo", Model = "ThinkPad" }, null, null, [new TaskChecklistEntry("Cleaning & Repaste")])
+        };
+
+        var result = TaskItemizedBonusEvaluator.EvaluateCombined(explicitItems, legacyTickets, paramsJson);
+
+        result.QualifiedCount.Should().Be(2);
+        result.TotalBonusAmount.Should().Be(100_000m);
+        result.ReferenceNumbers.Should().Equal(["T-EXP-01"]);
+    }
 }

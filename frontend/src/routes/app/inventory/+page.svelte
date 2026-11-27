@@ -73,6 +73,7 @@
 	});
 
 	const defaultTaxPercent = $derived(data.shopProfile?.inventoryDefaultTaxPercent ?? 11);
+	const defaultTaxMode = $derived(data.shopProfile?.inventoryDefaultTaxMode === 'Multiplier' ? 'Multiplier' : 'Percentage');
 	const roundingIncrement = $derived(Math.max(1, data.shopProfile?.inventoryRoundingIncrement ?? 1000));
 	const defaultUnit = $derived(data.shopProfile?.inventoryDefaultUnit ?? 'pcs');
 
@@ -644,6 +645,7 @@
 	locale={data.locale}
 	{currencyCode}
 	{defaultTaxPercent}
+	{defaultTaxMode}
 	{roundingIncrement}
 	{defaultUnit}
 	onclose={() => {

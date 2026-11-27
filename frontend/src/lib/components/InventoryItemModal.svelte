@@ -5,7 +5,15 @@
 	import CurrencyInput from '$lib/components/CurrencyInput.svelte';
 	import Dropdown from '$lib/components/ui/dropdown/Dropdown.svelte';
 	import { createTranslator, formatCurrency, type Locale } from '$lib/i18n';
+	import {
+		getTaxPresets,
+		isPresetActive,
+		normalizeTaxMode,
+		taxInputFromPercent,
+		taxPercentFromInput
+	} from '$lib/utils/inventory-tax';
 	import type { InventoryCategory, InventoryItem } from '$lib/types/inventory';
+	import type { InventoryTaxMode } from '$lib/types/settings';
 
 	const ITEM_TYPES = [
 		'SparePart',
@@ -27,6 +35,7 @@
 		locale = 'en' as Locale,
 		currencyCode = 'IDR',
 		defaultTaxPercent = 11,
+		defaultTaxMode = 'Percentage' as InventoryTaxMode,
 		roundingIncrement = 1000,
 		defaultUnit = 'pcs',
 		action = '?/saveItem',
@@ -38,6 +47,7 @@
 		locale: Locale;
 		currencyCode: string;
 		defaultTaxPercent?: number;
+		defaultTaxMode?: InventoryTaxMode;
 		roundingIncrement?: number;
 		defaultUnit?: string;
 		action?: string;
@@ -60,14 +70,23 @@
 								? 'A$'
 								: '$'
 	);
+	const taxPresets = $derived(getTaxPresets(currencyCode));
 	const stepRounding = $derived(Math.max(1, Number(roundingIncrement) || 1000));
 	const isEdit = $derived(Boolean(item));
 
 	let skuInput = $state<HTMLInputElement | null>(null);
 	let submitting = $state(false);
 	let errorMessage = $state<string | null>(null);
+	let showDiscardConfirm = $state(false);
 	let previousFocus: HTMLElement | null = null;
 	let initializedKey = '';
+	let initialSnapshot = $state('');
+
+	let taxMode = $state<InventoryTaxMode>('Percentage');
+	let taxInputValue = $state<number | string>(11);
+	let skuAutoFilled = $state(false);
+	let generatingSku = $state(false);
+	let skuRequestSeq = 0;
 
 	let draft = $state({
 		sku: '',
@@ -93,6 +112,34 @@
 
 	let useManualSalePrice = $state(false);
 	let manualSalePrice = $state<number | string>(0);
+
+	function snapshotFormState() {
+		return JSON.stringify({
+			sku: draft.sku.trim(),
+			name: draft.name,
+			categoryId: draft.categoryId,
+			itemType: draft.itemType,
+			condition: draft.condition,
+			purchasePrice: Number(draft.purchasePrice) || 0,
+			shippingCost: Number(draft.shippingCost) || 0,
+			serviceFee: Number(draft.serviceFee) || 0,
+			marginPercent: Number(draft.marginPercent) || 0,
+			taxPercent: Number(draft.taxPercent) || 0,
+			unit: draft.unit,
+			reorderLevel: Number(draft.reorderLevel) || 0,
+			locationNote: draft.locationNote,
+			barcodeValue: draft.barcodeValue,
+			supplierName: draft.supplierName,
+			quality: draft.quality,
+			warrantyDays: String(draft.warrantyDays ?? ''),
+			description: draft.description,
+			isActive: draft.isActive,
+			useManualSalePrice,
+			manualSalePrice: useManualSalePrice ? Number(manualSalePrice) || 0 : 0
+		});
+	}
+
+	const isDirty = $derived(initializedKey !== '' && snapshotFormState() !== initialSnapshot);
 
 	function computePricing(purchase: unknown, shipping: unknown, service: unknown, margin: unknown, tax: unknown) {
 		const p = Math.max(0, Number(purchase) || 0);
@@ -132,10 +179,61 @@
 		return options;
 	});
 
+	function setTaxMode(nextMode: InventoryTaxMode) {
+		if (taxMode === nextMode) return;
+		taxMode = nextMode;
+		taxInputValue = taxInputFromPercent(Number(draft.taxPercent) || 0, nextMode);
+	}
+
+	function applyTaxPreset(percent: number) {
+		draft.taxPercent = percent;
+		taxInputValue = taxInputFromPercent(percent, taxMode);
+	}
+
+	function handleTaxInput(event: Event) {
+		const raw = (event.currentTarget as HTMLInputElement).value;
+		taxInputValue = raw;
+		draft.taxPercent = taxPercentFromInput(raw, taxMode);
+	}
+
+	async function fetchNextSku(categoryId: string, options: { updateInitialSnapshot?: boolean } = {}) {
+		const requestId = ++skuRequestSeq;
+		generatingSku = true;
+		try {
+			const query = categoryId ? `?categoryId=${encodeURIComponent(categoryId)}` : '';
+			const res = await fetch(`/app/inventory/next-sku${query}`);
+			if (!res.ok || requestId !== skuRequestSeq) return;
+			const data = (await res.json()) as { sku?: string };
+			if (data?.sku && requestId === skuRequestSeq) {
+				draft.sku = data.sku;
+				skuAutoFilled = true;
+				if (options.updateInitialSnapshot) {
+					initialSnapshot = snapshotFormState();
+				}
+			}
+		} catch {
+			// Best-effort helper; users can still type any SKU manually.
+		} finally {
+			if (requestId === skuRequestSeq) generatingSku = false;
+		}
+	}
+
+	function handleCategoryChange(nextCategoryId: string) {
+		if (!isEdit && (skuAutoFilled || !draft.sku.trim())) {
+			void fetchNextSku(nextCategoryId);
+		}
+	}
+
 	function resetFromTarget(target: InventoryItem | null) {
 		errorMessage = null;
 		submitting = false;
+		showDiscardConfirm = false;
+		skuRequestSeq++;
+		generatingSku = false;
+		taxMode = normalizeTaxMode(defaultTaxMode);
+
 		if (!target) {
+			skuAutoFilled = true;
 			draft = {
 				sku: '',
 				name: '',
@@ -157,11 +255,15 @@
 				description: '',
 				isActive: true
 			};
+			taxInputValue = taxInputFromPercent(defaultTaxPercent, taxMode);
 			useManualSalePrice = false;
 			manualSalePrice = 0;
+			initialSnapshot = snapshotFormState();
+			void fetchNextSku('', { updateInitialSnapshot: true });
 			return;
 		}
 
+		skuAutoFilled = false;
 		const purchase = target.purchasePrice ?? target.costPrice ?? 0;
 		const shipping = target.shippingCost ?? 0;
 		const service = target.serviceFee ?? 0;
@@ -189,11 +291,13 @@
 			description: target.description ?? '',
 			isActive: target.isActive
 		};
+		taxInputValue = taxInputFromPercent(tax, taxMode);
 
 		const storedSalePrice = target.fixedSalePrice ?? target.salePrice ?? 0;
 		const calculated = computePricing(purchase, shipping, service, margin, tax).calculatedSalePrice;
 		useManualSalePrice = Math.abs(storedSalePrice - calculated) > 0.01;
 		manualSalePrice = storedSalePrice;
+		initialSnapshot = snapshotFormState();
 	}
 
 	$effect(() => {
@@ -211,21 +315,34 @@
 			initializedKey = '';
 			errorMessage = null;
 			submitting = false;
+			showDiscardConfirm = false;
 			previousFocus?.focus?.();
 			previousFocus = null;
 		}
 	});
 
-	function handleClose() {
+	function requestClose() {
 		if (submitting) return;
+		if (isDirty) {
+			showDiscardConfirm = true;
+			return;
+		}
+		onclose();
+	}
+
+	function confirmDiscard() {
+		showDiscardConfirm = false;
 		onclose();
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (open && event.key === 'Escape' && !submitting) {
-			event.preventDefault();
-			onclose();
+		if (!open || submitting || event.key !== 'Escape') return;
+		event.preventDefault();
+		if (showDiscardConfirm) {
+			showDiscardConfirm = false;
+			return;
 		}
+		requestClose();
 	}
 
 	function toggleManualPrice(checked: boolean) {
@@ -242,12 +359,15 @@
 	<div
 		transition:fade={{ duration: 150 }}
 		class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
-		onclick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
+		onclick={(e) => {
+			if (e.target === e.currentTarget) requestClose();
+		}}
 		role="presentation"
 	>
 		<div
 			class="bg-white border border-stone rounded-2xl shadow-2xl max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden my-auto"
 			role="dialog"
+			tabindex="-1"
 			aria-modal="true"
 			aria-labelledby="inventory-item-modal-title"
 		>
@@ -264,12 +384,44 @@
 					type="button"
 					class="w-8 h-8 rounded-lg hover:bg-ash text-secondary hover:text-ink flex items-center justify-center cursor-pointer transition-colors disabled:opacity-50 shrink-0"
 					disabled={submitting}
-					onclick={handleClose}
+					onclick={requestClose}
 					aria-label={t('common.close')}
 				>
 					<span class="material-symbols-outlined text-[20px]" aria-hidden="true">close</span>
 				</button>
 			</div>
+
+			{#if showDiscardConfirm}
+				<div
+					role="alertdialog"
+					aria-labelledby="discard-confirm-title"
+					class="px-6 py-3 bg-amber-50 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3 shrink-0"
+				>
+					<div class="flex items-start gap-2.5 min-w-0">
+						<span class="material-symbols-outlined text-[18px] text-amber-800 shrink-0 mt-0.5" aria-hidden="true">warning</span>
+						<div class="text-xs">
+							<p id="discard-confirm-title" class="font-bold text-amber-950">{t('inventory.unsavedTitle')}</p>
+							<p class="text-amber-900 mt-0.5">{t('inventory.unsavedMessage')}</p>
+						</div>
+					</div>
+					<div class="flex items-center gap-2 shrink-0">
+						<button
+							type="button"
+							class="px-3 py-1.5 rounded-button border border-stone bg-white text-ink hover:bg-ash text-xs font-semibold cursor-pointer transition-colors"
+							onclick={() => (showDiscardConfirm = false)}
+						>
+							{t('inventory.keepEditing')}
+						</button>
+						<button
+							type="button"
+							class="px-3 py-1.5 rounded-button bg-error text-white hover:bg-error/90 text-xs font-semibold cursor-pointer transition-colors"
+							onclick={confirmDiscard}
+						>
+							{t('inventory.discardChanges')}
+						</button>
+					</div>
+				</div>
+			{/if}
 
 			<form
 				method="POST"
@@ -277,6 +429,7 @@
 				use:enhance={() => {
 					submitting = true;
 					errorMessage = null;
+					showDiscardConfirm = false;
 					return async ({ result, update }) => {
 						submitting = false;
 						if (result.type === 'failure') {
@@ -304,6 +457,7 @@
 				{/if}
 				<input type="hidden" name="costPrice" value={draft.purchasePrice} />
 				<input type="hidden" name="salePrice" value={effectiveSalePrice} />
+				<input type="hidden" name="taxPercent" value={draft.taxPercent} />
 				<input type="hidden" name="fixedSalePrice" value={useManualSalePrice ? manualSalePrice : ''} />
 
 				{#if errorMessage}
@@ -334,51 +488,72 @@
 				{/if}
 
 				<!-- Identity & Classification -->
-				<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-					<label class="space-y-1 block">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.sku')} *</span>
+				<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 items-end">
+					<div class="space-y-1.5">
+						<div class="flex items-center justify-between gap-1 leading-4">
+							<label for="inventory-sku-input" class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">
+								{t('inventory.sku')} *
+							</label>
+							{#if !isEdit}
+								<button
+									type="button"
+									disabled={generatingSku}
+									onclick={() => fetchNextSku(draft.categoryId)}
+									class="inline-flex items-center gap-0.5 text-[11px] font-semibold text-claytile hover:text-ink cursor-pointer transition-colors disabled:opacity-50"
+									title={t('inventory.autoGenerateSkuHint')}
+								>
+									<span class="material-symbols-outlined text-[14px] {generatingSku ? 'animate-spin' : ''}" aria-hidden="true">
+										{generatingSku ? 'progress_activity' : 'auto_awesome'}
+									</span>
+									<span>{t('inventory.autoGenerateSku')}</span>
+								</button>
+							{/if}
+						</div>
 						<input
+							id="inventory-sku-input"
 							bind:this={skuInput}
 							name="sku"
 							bind:value={draft.sku}
+							oninput={() => (skuAutoFilled = false)}
 							required
 							maxlength="80"
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink bg-white focus:border-ink focus:ring-1 focus:ring-ink/10 focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink bg-white focus:border-ink focus:ring-1 focus:ring-ink/10 focus:outline-none"
 							placeholder={t('inventory.placeholder.sku')}
 						/>
-					</label>
-					<label class="space-y-1 sm:col-span-2 block">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.name')} *</span>
+					</div>
+					<label class="space-y-1.5 sm:col-span-2 block">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.name')} *</span>
 						<input
 							name="name"
 							bind:value={draft.name}
 							required
 							maxlength="180"
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:ring-1 focus:ring-ink/10 focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:ring-1 focus:ring-ink/10 focus:outline-none"
 							placeholder={t('inventory.placeholder.name')}
 						/>
 					</label>
-					<div class="space-y-1">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.category')}</span>
+					<div class="space-y-1.5">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.category')}</span>
 						<Dropdown
 							name="categoryId"
 							bind:value={draft.categoryId}
+							onchange={handleCategoryChange}
 							searchable
 							searchPlaceholder={t('common.search')}
 							noOptionsLabel={t('common.noOptions')}
 							options={categoryOptions}
 						/>
 					</div>
-					<div class="space-y-1">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.itemType')}</span>
+					<div class="space-y-1.5">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.itemType')}</span>
 						<Dropdown
 							name="itemType"
 							bind:value={draft.itemType}
 							options={ITEM_TYPES.map((type) => ({ value: type, label: t(`inventory.itemType.${type}`) }))}
 						/>
 					</div>
-					<div class="space-y-1">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.condition')}</span>
+					<div class="space-y-1.5">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.condition')}</span>
 						<Dropdown
 							name="condition"
 							bind:value={draft.condition}
@@ -402,9 +577,9 @@
 						</label>
 					</div>
 
-					<div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-						<div class="space-y-1">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.purchasePrice')}</span>
+					<div class="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-4 items-end">
+						<div class="space-y-1.5">
+							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block leading-4">{t('inventory.purchasePrice')}</span>
 							<CurrencyInput
 								name="purchasePrice"
 								prefix={currencySymbol}
@@ -413,8 +588,8 @@
 								bind:value={draft.purchasePrice}
 							/>
 						</div>
-						<div class="space-y-1">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.shippingCost')}</span>
+						<div class="space-y-1.5">
+							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block leading-4">{t('inventory.shippingCost')}</span>
 							<CurrencyInput
 								name="shippingCost"
 								prefix={currencySymbol}
@@ -423,8 +598,8 @@
 								bind:value={draft.shippingCost}
 							/>
 						</div>
-						<div class="space-y-1">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.serviceFee')}</span>
+						<div class="space-y-1.5">
+							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block leading-4">{t('inventory.serviceFee')}</span>
 							<CurrencyInput
 								name="serviceFee"
 								prefix={currencySymbol}
@@ -433,30 +608,52 @@
 								bind:value={draft.serviceFee}
 							/>
 						</div>
-						<label class="space-y-1 block">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.marginPercent')}</span>
+						<label class="space-y-1.5 block">
+							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase block leading-4">{t('inventory.marginPercent')}</span>
 							<input
 								name="marginPercent"
 								type="number"
 								min="0"
 								step="0.01"
 								bind:value={draft.marginPercent}
-								class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink focus:border-ink focus:outline-none bg-white"
+								class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm font-mono tabular-nums text-ink focus:border-ink focus:outline-none bg-white"
 							/>
 						</label>
-						<label class="space-y-1 block">
-							<span class="font-label-caps text-secondary text-[10px] font-bold uppercase">{t('inventory.taxPercent')}</span>
+						<div class="space-y-1.5">
+							<div class="flex items-center justify-between gap-1 leading-4">
+								<label for="inventory-tax-input" class="font-label-caps text-secondary text-[10px] font-bold uppercase">
+									{taxMode === 'Multiplier' ? t('inventory.taxMultiplier') : t('inventory.taxPercent')}
+								</label>
+								<div class="inline-flex rounded-md border border-stone bg-white p-0.5 text-[10px] font-bold shrink-0" role="group" aria-label={t('inventory.taxMode')}>
+									<button
+										type="button"
+										onclick={() => setTaxMode('Percentage')}
+										class="px-1.5 py-0.5 rounded-xs cursor-pointer transition-colors leading-none {taxMode === 'Percentage' ? 'bg-ink text-white' : 'text-secondary hover:text-ink'}"
+									>
+										%
+									</button>
+									<button
+										type="button"
+										onclick={() => setTaxMode('Multiplier')}
+										class="px-1.5 py-0.5 rounded-xs cursor-pointer transition-colors leading-none {taxMode === 'Multiplier' ? 'bg-ink text-white' : 'text-secondary hover:text-ink'}"
+									>
+										×
+									</button>
+								</div>
+							</div>
 							<input
-								name="taxPercent"
+								id="inventory-tax-input"
 								type="number"
-								min="0"
-								step="0.01"
-								bind:value={draft.taxPercent}
-								class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink focus:border-ink focus:outline-none bg-white"
+								min={taxMode === 'Multiplier' ? '1' : '0'}
+								max={taxMode === 'Multiplier' ? '2' : '100'}
+								step={taxMode === 'Multiplier' ? '0.005' : '0.01'}
+								value={taxInputValue}
+								oninput={handleTaxInput}
+								class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm font-mono tabular-nums text-ink focus:border-ink focus:outline-none bg-white"
 							/>
-						</label>
-						<div class="space-y-1">
-							<div class="flex items-center justify-between gap-1">
+						</div>
+						<div class="space-y-1.5">
+							<div class="flex items-center justify-between gap-1 leading-4">
 								<span class="font-label-caps text-ink text-[10px] font-bold uppercase">{t('inventory.salePrice')}</span>
 								{#if !useManualSalePrice}
 									<span class="text-[10px] text-secondary">{t('inventory.autoCalculated')}</span>
@@ -477,6 +674,28 @@
 						</div>
 					</div>
 
+					<!-- Tax Presets Bar -->
+					<div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+						<div class="flex flex-wrap items-center gap-1.5">
+							<span class="text-[11px] font-medium text-secondary">{t('inventory.taxPresets')}:</span>
+							{#each taxPresets as preset}
+								{@const active = isPresetActive(Number(draft.taxPercent) || 0, preset.percent)}
+								<button
+									type="button"
+									onclick={() => applyTaxPreset(preset.percent)}
+									class="px-2 py-0.5 rounded-md border text-[11px] font-medium cursor-pointer transition-colors {active ? 'border-ink bg-ink text-white' : 'border-stone bg-white text-secondary hover:text-ink hover:bg-ash'}"
+								>
+									{t(preset.labelKey)}
+								</button>
+							{/each}
+						</div>
+						<span class="text-[11px] font-mono tabular-nums text-secondary">
+							{taxMode === 'Multiplier'
+								? `= ${Number((Number(draft.taxPercent) || 0).toFixed(2))}%`
+								: `×${Number((1 + (Number(draft.taxPercent) || 0) / 100).toFixed(4))}`}
+						</span>
+					</div>
+
 					{#if useManualSalePrice}
 						<p class="text-xs text-secondary">{t('inventory.manualSalePriceHint')}</p>
 					{/if}
@@ -490,69 +709,69 @@
 				</div>
 
 				<!-- Stock Limits & Physical Attributes -->
-				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-					<label class="space-y-1 block">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.unit')}</span>
+				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 items-end">
+					<label class="space-y-1.5 block">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.unit')}</span>
 						<input
 							name="unit"
 							bind:value={draft.unit}
 							maxlength="20"
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
 						/>
 					</label>
-					<label class="space-y-1 block">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.reorder')}</span>
+					<label class="space-y-1.5 block">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.reorder')}</span>
 						<input
 							name="reorderLevel"
 							type="number"
 							min="0"
 							step="1"
 							bind:value={draft.reorderLevel}
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink bg-white focus:border-ink focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm font-mono tabular-nums text-ink bg-white focus:border-ink focus:outline-none"
 						/>
 					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.location')}</span>
+					<label class="space-y-1.5 block sm:col-span-2">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.location')}</span>
 						<input
 							name="locationNote"
 							bind:value={draft.locationNote}
 							maxlength="180"
 							placeholder={t('inventory.placeholder.location')}
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
 						/>
 					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.barcodeValue')}</span>
+					<label class="space-y-1.5 block sm:col-span-2">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.barcodeValue')}</span>
 						<input
 							name="barcodeValue"
 							bind:value={draft.barcodeValue}
 							maxlength="120"
 							placeholder={t('inventory.placeholder.barcode')}
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink bg-white focus:border-ink focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink bg-white focus:border-ink focus:outline-none"
 						/>
 					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.supplier')}</span>
+					<label class="space-y-1.5 block sm:col-span-2">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.supplier')}</span>
 						<input
 							name="supplierName"
 							bind:value={draft.supplierName}
 							maxlength="180"
 							placeholder={t('inventory.placeholder.supplier')}
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
 						/>
 					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.quality')}</span>
+					<label class="space-y-1.5 block sm:col-span-2">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.quality')}</span>
 						<input
 							name="quality"
 							bind:value={draft.quality}
 							maxlength="120"
 							placeholder={t('inventory.placeholder.quality')}
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
 						/>
 					</label>
-					<label class="space-y-1 block sm:col-span-2">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.warrantyDays')}</span>
+					<label class="space-y-1.5 block sm:col-span-2">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.warrantyDays')}</span>
 						<input
 							name="warrantyDays"
 							type="number"
@@ -560,17 +779,17 @@
 							step="1"
 							bind:value={draft.warrantyDays}
 							placeholder={t('inventory.placeholder.warrantyDays')}
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm font-mono text-ink bg-white focus:border-ink focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm font-mono tabular-nums text-ink bg-white focus:border-ink focus:outline-none"
 						/>
 					</label>
-					<label class="space-y-1 block col-span-2 sm:col-span-4">
-						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider">{t('inventory.description')}</span>
+					<label class="space-y-1.5 block col-span-2 sm:col-span-4">
+						<span class="font-label-caps text-secondary text-[11px] font-bold uppercase tracking-wider block leading-4">{t('inventory.description')}</span>
 						<input
 							name="description"
 							bind:value={draft.description}
 							maxlength="1000"
 							placeholder={t('inventory.secondhandHint')}
-							class="w-full border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
+							class="w-full h-10 border border-stone rounded-input px-3 py-2 text-body-sm text-ink bg-white focus:border-ink focus:outline-none"
 						/>
 					</label>
 				</div>
@@ -594,16 +813,16 @@
 				<div class="pt-4 border-t border-stone flex items-center justify-end gap-2 shrink-0">
 					<button
 						type="button"
-						class="px-4 py-2 rounded-button border border-stone bg-white text-secondary hover:text-ink hover:bg-ash font-medium text-body-sm transition-all cursor-pointer disabled:opacity-50"
+						class="h-10 px-4 rounded-button border border-stone bg-white text-secondary hover:text-ink hover:bg-ash font-medium text-body-sm transition-all cursor-pointer disabled:opacity-50"
 						disabled={submitting}
-						onclick={handleClose}
+						onclick={requestClose}
 					>
 						{t('common.cancel')}
 					</button>
 					<button
 						type="submit"
 						disabled={submitting}
-						class="px-5 py-2 rounded-button bg-ink text-white font-medium text-body-sm hover:bg-ink/90 active:scale-95 transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+						class="h-10 px-5 rounded-button bg-ink text-white font-medium text-body-sm hover:bg-ink/90 active:scale-95 transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
 					>
 						{#if submitting}
 							<span class="material-symbols-outlined text-[16px] animate-spin" aria-hidden="true">progress_activity</span>

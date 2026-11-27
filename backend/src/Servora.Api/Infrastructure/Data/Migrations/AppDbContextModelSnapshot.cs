@@ -3055,6 +3055,82 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.ToTable("workspace_payment_gateways", (string)null);
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Payroll.BonusTaskDefinition", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(60)
+                        .HasColumnType("varchar(60)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<decimal>("DefaultCustomerPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("DefaultGamingRate")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<bool>("DefaultIsInternalOnly")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<decimal>("DefaultStandardRate")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("DefaultWorkItemType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)");
+
+                    b.Property<string>("LegacyKeywords")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TaskKey")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("varchar(60)");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShopId", "TaskKey")
+                        .IsUnique();
+
+                    b.HasIndex("ShopId", "IsActive", "SortOrder");
+
+                    b.ToTable("bonus_task_definitions", (string)null);
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Payroll.BonusType", b =>
                 {
                     b.Property<int>("Id")
@@ -3091,6 +3167,70 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.ToTable("bonus_types", (string)null);
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Payroll.CompensationTemplate", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("BaseHourlyRate")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("BasePayMode")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<string>("BonusConfigsJson")
+                        .IsRequired()
+                        .HasColumnType("json");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("varchar(120)");
+
+                    b.Property<string>("PayPolicyJson")
+                        .IsRequired()
+                        .HasColumnType("json");
+
+                    b.Property<int>("ShopId")
+                        .HasColumnType("int")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TieredRatesJson")
+                        .IsRequired()
+                        .HasColumnType("json");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShopId", "Name")
+                        .IsUnique();
+
+                    b.HasIndex("ShopId", "IsActive", "SortOrder");
+
+                    b.ToTable("compensation_templates", (string)null);
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Payroll.FreelanceProfile", b =>
                 {
                     b.Property<int>("Id")
@@ -3108,8 +3248,15 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("varchar(30)");
 
+                    b.Property<int?>("CompensationTemplateId")
+                        .HasColumnType("int");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetime(6)");
+
+                    b.Property<string>("PayPolicyJson")
+                        .IsRequired()
+                        .HasColumnType("json");
 
                     b.Property<int>("ShopId")
                         .HasColumnType("int")
@@ -3127,6 +3274,8 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasColumnType("datetime(6)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CompensationTemplateId");
 
                     b.HasIndex("ShopUserId")
                         .IsUnique();
@@ -4033,6 +4182,19 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.Property<int?>("ApprovalRequestId")
                         .HasColumnType("int");
 
+                    b.Property<int?>("AssignedTechnicianUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("BonusTaskKey")
+                        .HasMaxLength(60)
+                        .HasColumnType("varchar(60)");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int?>("CompletedByUserId")
+                        .HasColumnType("int");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
@@ -4043,7 +4205,14 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("varchar(1000)");
 
+                    b.Property<string>("DeviceCategoryOverride")
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)");
+
                     b.Property<bool>("IsCompleted")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<bool>("IsInternalOnly")
                         .HasColumnType("tinyint(1)");
 
                     b.Property<string>("ItemType")
@@ -4083,9 +4252,15 @@ namespace Servora.Api.Infrastructure.Data.Migrations
 
                     b.HasIndex("ApprovalRequestId");
 
+                    b.HasIndex("AssignedTechnicianUserId");
+
+                    b.HasIndex("CompletedByUserId");
+
                     b.HasIndex("CreatedByUserId");
 
                     b.HasIndex("ServiceTicketId");
+
+                    b.HasIndex("ShopId", "BonusTaskKey", "IsCompleted");
 
                     b.HasIndex("ShopId", "ServiceTicketId", "Status");
 
@@ -5111,8 +5286,35 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                     b.Navigation("Shop");
                 });
 
+            modelBuilder.Entity("Servora.Api.Features.Payroll.BonusTaskDefinition", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Shop");
+                });
+
+            modelBuilder.Entity("Servora.Api.Features.Payroll.CompensationTemplate", b =>
+                {
+                    b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
+                        .WithMany()
+                        .HasForeignKey("ShopId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Shop");
+                });
+
             modelBuilder.Entity("Servora.Api.Features.Payroll.FreelanceProfile", b =>
                 {
+                    b.HasOne("Servora.Api.Features.Payroll.CompensationTemplate", "CompensationTemplate")
+                        .WithMany()
+                        .HasForeignKey("CompensationTemplateId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Servora.Api.Features.Shops.Shop", "Shop")
                         .WithMany()
                         .HasForeignKey("ShopId")
@@ -5124,6 +5326,8 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasForeignKey("Servora.Api.Features.Payroll.FreelanceProfile", "ShopUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("CompensationTemplate");
 
                     b.Navigation("Shop");
 
@@ -5473,6 +5677,16 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .HasForeignKey("ApprovalRequestId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("Servora.Api.Features.Identity.Users.ApplicationUser", "AssignedTechnicianUser")
+                        .WithMany()
+                        .HasForeignKey("AssignedTechnicianUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Servora.Api.Features.Identity.Users.ApplicationUser", "CompletedByUser")
+                        .WithMany()
+                        .HasForeignKey("CompletedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Servora.Api.Features.Identity.Users.ApplicationUser", "CreatedByUser")
                         .WithMany()
                         .HasForeignKey("CreatedByUserId")
@@ -5485,6 +5699,10 @@ namespace Servora.Api.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("ApprovalRequest");
+
+                    b.Navigation("AssignedTechnicianUser");
+
+                    b.Navigation("CompletedByUser");
 
                     b.Navigation("CreatedByUser");
 

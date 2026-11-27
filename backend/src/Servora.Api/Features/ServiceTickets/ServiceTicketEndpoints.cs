@@ -9,6 +9,7 @@ using Servora.Api.Features.Identity.Permissions;
 using Servora.Api.Features.Inventory;
 using Servora.Api.Features.Notifications;
 using Servora.Api.Features.Payments;
+using Servora.Api.Features.Payroll;
 using Servora.Api.Features.Settings;
 using Servora.Api.Features.ServiceTemplates;
 using Servora.Api.Features.Shops;
@@ -164,7 +165,15 @@ public static class ServiceTicketEndpoints
         string Status,
         bool IsCompleted,
         DateTimeOffset CreatedAt,
-        DateTimeOffset? UpdatedAt);
+        DateTimeOffset? UpdatedAt,
+        string? BonusTaskKey = null,
+        int? AssignedTechnicianUserId = null,
+        string? AssignedTechnicianName = null,
+        int? CompletedByUserId = null,
+        string? CompletedByName = null,
+        DateTimeOffset? CompletedAt = null,
+        string? DeviceCategoryOverride = null,
+        bool IsInternalOnly = false);
     public sealed record PaymentTransactionDto(
         int Id,
         string EntryType,
@@ -335,7 +344,18 @@ public static class ServiceTicketEndpoints
     public sealed record AssignTicketRequest(int? TechnicianUserId);
     public sealed record AddNoteRequest(string Note, bool IsPublicVisible);
     public sealed record ProposedWorkItemRequest(string? ItemType, string Title, string? Description, decimal Quantity, decimal UnitPrice);
-    public sealed record UpsertWorkItemRequest(string? ItemType, string Title, string? Description, decimal Quantity, decimal UnitPrice, bool IsCompleted = false, int? ApprovalRequestId = null);
+    public sealed record UpsertWorkItemRequest(
+        string? ItemType,
+        string Title,
+        string? Description,
+        decimal Quantity,
+        decimal UnitPrice,
+        bool IsCompleted = false,
+        int? ApprovalRequestId = null,
+        string? BonusTaskKey = null,
+        int? AssignedTechnicianUserId = null,
+        string? DeviceCategoryOverride = null,
+        bool IsInternalOnly = false);
     public sealed record CreateApprovalRequest(string Title, string Description, decimal? EstimatedAmount, IReadOnlyCollection<ProposedWorkItemRequest>? ProposedWorkItems = null);
     public sealed record ResolveApprovalRequest(string? Note);
     public sealed record UpdatePaymentRequest(string Status, decimal AmountPaid, decimal? TotalAmount, string? Method, string? ReferenceNumber, string? Notes);
@@ -343,7 +363,8 @@ public static class ServiceTicketEndpoints
     public sealed record VoidPaymentTransactionRequest(string Reason);
     public sealed record UpdateBillingRequest(decimal DiscountAmount, bool IsWaived, decimal? ManualTotalAmount, bool ClearManualOverride = false, string? Notes = null);
     public sealed record PickupOverrideRequest(string Reason);
-    public sealed record ApplyTemplateRequest(int TemplateId);
+    public sealed record ApplyTemplateRequest(int TemplateId, bool ReplaceExisting = false);
+    public sealed record CreateChecklistItemRequest(string Title, string? Description = null);
     public sealed record UpdateChecklistItemRequest(bool IsCompleted);
     public sealed record UpdateAttachmentVisibilityRequest(bool IsPublicVisible);
     public sealed record VerifyPublicPhotosRequest(string PhoneLastFour);
@@ -562,8 +583,18 @@ public static class ServiceTicketEndpoints
             .WithOpenApi()
             .RequireAuthorization(ApplicationPermissions.ServiceTicketsWrite);
 
+        app.MapPost("/service-tickets/{id:int}/checklist", AddChecklistItemAsync)
+            .WithName("AddServiceTicketChecklistItem")
+            .WithOpenApi()
+            .RequireAuthorization(ApplicationPermissions.ServiceTicketsWrite);
+
         app.MapPut("/service-tickets/{id:int}/checklist/{checklistItemId:int}", UpdateChecklistItemAsync)
             .WithName("UpdateServiceTicketChecklistItem")
+            .WithOpenApi()
+            .RequireAuthorization(ApplicationPermissions.ServiceTicketsWrite);
+
+        app.MapDelete("/service-tickets/{id:int}/checklist/{checklistItemId:int}", DeleteChecklistItemAsync)
+            .WithName("DeleteServiceTicketChecklistItem")
             .WithOpenApi()
             .RequireAuthorization(ApplicationPermissions.ServiceTicketsWrite);
 
@@ -1313,7 +1344,7 @@ public static class ServiceTicketEndpoints
         var billing = await TicketBillingService.GetBillingSnapshotAsync(context, shopId, ticket, cancellationToken);
 
         var rawWorkItems = await context.ServiceTicketWorkItems.AsNoTracking()
-            .Where(work => work.ShopId == shopId && work.ServiceTicketId == id && work.Status == WorkItemStatus.Approved)
+            .Where(work => work.ShopId == shopId && work.ServiceTicketId == id && work.Status == WorkItemStatus.Approved && !work.IsInternalOnly)
             .OrderBy(work => work.CreatedAt)
             .ThenBy(work => work.Id)
             .Select(work => new
@@ -2277,6 +2308,8 @@ public static class ServiceTicketEndpoints
 
         var items = await context.ServiceTicketWorkItems
             .AsNoTracking()
+            .Include(item => item.AssignedTechnicianUser)
+            .Include(item => item.CompletedByUser)
             .Where(item => item.ShopId == shopId && item.ServiceTicketId == id)
             .OrderBy(item => item.CreatedAt)
             .ThenBy(item => item.Id)
@@ -2294,7 +2327,7 @@ public static class ServiceTicketEndpoints
         ClaimsPrincipal principal,
         CancellationToken cancellationToken)
     {
-        var validationErrors = ValidateWorkItemRequest(request, out var itemType, out var title, out var description);
+        var validationErrors = ValidateWorkItemRequest(request, out var itemType, out var title, out var description, out var bonusTaskKey, out var deviceCategoryOverride);
         if (validationErrors.Count > 0) return Validation(validationErrors);
 
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
@@ -2306,6 +2339,14 @@ public static class ServiceTicketEndpoints
         if (ticket.Status.IsFinal || ticket.Status.IsCancelled)
         {
             return Results.BadRequest("Work items cannot be modified on final or cancelled tickets.");
+        }
+
+        if (request.AssignedTechnicianUserId.HasValue)
+        {
+            if (!await IsActiveShopUserAsync(context, shopId, request.AssignedTechnicianUserId.Value, cancellationToken))
+            {
+                return Validation(("assignedTechnicianUserId", "Assigned technician is not an active member of this workspace."));
+            }
         }
 
         var targetStatus = WorkItemStatus.Approved;
@@ -2332,6 +2373,11 @@ public static class ServiceTicketEndpoints
         var actorUserId = GetUserId(principal);
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
 
+        var effectiveUnitPrice = request.IsInternalOnly ? 0m : TicketBillingCalculator.RoundMoney(request.UnitPrice);
+        var effectiveCompletedBy = request.IsCompleted
+            ? (request.AssignedTechnicianUserId ?? ticket.AssignedTechnicianUserId ?? actorUserId)
+            : (int?)null;
+
         var workItem = new ServiceTicketWorkItem
         {
             ShopId = shopId,
@@ -2342,15 +2388,21 @@ public static class ServiceTicketEndpoints
             Title = title!,
             Description = description,
             Quantity = request.Quantity,
-            UnitPrice = TicketBillingCalculator.RoundMoney(request.UnitPrice),
+            UnitPrice = effectiveUnitPrice,
             Status = targetStatus,
-            IsCompleted = request.IsCompleted
+            IsCompleted = request.IsCompleted,
+            BonusTaskKey = bonusTaskKey,
+            AssignedTechnicianUserId = request.AssignedTechnicianUserId,
+            CompletedByUserId = effectiveCompletedBy,
+            CompletedAt = request.IsCompleted ? DateTimeOffset.UtcNow : null,
+            DeviceCategoryOverride = deviceCategoryOverride,
+            IsInternalOnly = request.IsInternalOnly
         };
 
         context.ServiceTicketWorkItems.Add(workItem);
         await context.SaveChangesAsync(cancellationToken);
 
-        if (targetStatus == WorkItemStatus.Approved)
+        if (targetStatus == WorkItemStatus.Approved && !workItem.IsInternalOnly)
         {
             await TicketBillingService.RecalculateTicketBillingAsync(
                 context,
@@ -2374,7 +2426,13 @@ public static class ServiceTicketEndpoints
         await activityLogger.LogAsync(EntityType, id, "TicketWorkItemCreated", $"Work item added: {workItem.Title}", cancellationToken: cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        return Results.Created($"/api/v1/service-tickets/{id}/work-items/{workItem.Id}", ToWorkItemDto(workItem));
+        var createdWithUsers = await context.ServiceTicketWorkItems
+            .AsNoTracking()
+            .Include(item => item.AssignedTechnicianUser)
+            .Include(item => item.CompletedByUser)
+            .FirstAsync(item => item.Id == workItem.Id, cancellationToken);
+
+        return Results.Created($"/api/v1/service-tickets/{id}/work-items/{workItem.Id}", ToWorkItemDto(createdWithUsers));
     }
 
     private static async Task<IResult> UpdateWorkItemAsync(
@@ -2387,7 +2445,7 @@ public static class ServiceTicketEndpoints
         ClaimsPrincipal principal,
         CancellationToken cancellationToken)
     {
-        var validationErrors = ValidateWorkItemRequest(request, out var itemType, out var title, out var description);
+        var validationErrors = ValidateWorkItemRequest(request, out var itemType, out var title, out var description, out var bonusTaskKey, out var deviceCategoryOverride);
         if (validationErrors.Count > 0) return Validation(validationErrors);
 
         var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
@@ -2401,6 +2459,14 @@ public static class ServiceTicketEndpoints
             return Results.BadRequest("Work items cannot be modified on final or cancelled tickets.");
         }
 
+        if (request.AssignedTechnicianUserId.HasValue)
+        {
+            if (!await IsActiveShopUserAsync(context, shopId, request.AssignedTechnicianUserId.Value, cancellationToken))
+            {
+                return Validation(("assignedTechnicianUserId", "Assigned technician is not an active member of this workspace."));
+            }
+        }
+
         var workItem = await context.ServiceTicketWorkItems
             .FirstOrDefaultAsync(item => item.Id == workItemId && item.ServiceTicketId == id && item.ShopId == shopId, cancellationToken);
         if (workItem is null) return Results.NotFound();
@@ -2412,15 +2478,38 @@ public static class ServiceTicketEndpoints
         var actorUserId = GetUserId(principal);
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
 
+        var wasCompleted = workItem.IsCompleted;
+        var wasInternalOnly = workItem.IsInternalOnly;
+
         workItem.ItemType = itemType;
         workItem.Title = title!;
         workItem.Description = description;
         workItem.Quantity = request.Quantity;
-        workItem.UnitPrice = TicketBillingCalculator.RoundMoney(request.UnitPrice);
+        workItem.IsInternalOnly = request.IsInternalOnly;
+        workItem.UnitPrice = request.IsInternalOnly ? 0m : TicketBillingCalculator.RoundMoney(request.UnitPrice);
+        workItem.BonusTaskKey = bonusTaskKey;
+        workItem.AssignedTechnicianUserId = request.AssignedTechnicianUserId;
+        workItem.DeviceCategoryOverride = deviceCategoryOverride;
         workItem.IsCompleted = request.IsCompleted;
+
+        if (request.IsCompleted && !wasCompleted)
+        {
+            workItem.CompletedAt = DateTimeOffset.UtcNow;
+            workItem.CompletedByUserId = request.AssignedTechnicianUserId ?? ticket.AssignedTechnicianUserId ?? actorUserId;
+        }
+        else if (!request.IsCompleted && wasCompleted)
+        {
+            workItem.CompletedAt = null;
+            workItem.CompletedByUserId = null;
+        }
+        else if (request.IsCompleted && request.AssignedTechnicianUserId.HasValue)
+        {
+            workItem.CompletedByUserId = request.AssignedTechnicianUserId;
+        }
+
         await context.SaveChangesAsync(cancellationToken);
 
-        if (workItem.Status == WorkItemStatus.Approved)
+        if (workItem.Status == WorkItemStatus.Approved && (!workItem.IsInternalOnly || !wasInternalOnly))
         {
             await TicketBillingService.RecalculateTicketBillingAsync(
                 context,
@@ -2444,7 +2533,13 @@ public static class ServiceTicketEndpoints
         await activityLogger.LogAsync(EntityType, id, "TicketWorkItemUpdated", $"Work item updated: {workItem.Title}", cancellationToken: cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        return Results.Ok(ToWorkItemDto(workItem));
+        var updatedWithUsers = await context.ServiceTicketWorkItems
+            .AsNoTracking()
+            .Include(item => item.AssignedTechnicianUser)
+            .Include(item => item.CompletedByUser)
+            .FirstAsync(item => item.Id == workItem.Id, cancellationToken);
+
+        return Results.Ok(ToWorkItemDto(updatedWithUsers));
     }
 
     private static async Task<IResult> DeleteWorkItemAsync(
@@ -2970,11 +3065,32 @@ public static class ServiceTicketEndpoints
         if (template is null) return Results.BadRequest("Template was not found.");
         if (template.ChecklistItems.Count == 0) return Results.BadRequest("Template has no checklist items.");
 
-        await context.ServiceTicketChecklistItems
-            .Where(item => item.ShopId == shopId && item.ServiceTicketId == id)
-            .ExecuteDeleteAsync(cancellationToken);
-        context.ServiceTicketChecklistItems.AddRange(template.ChecklistItems
+        var nextOrder = 1;
+        HashSet<string> existingTitles = new(StringComparer.OrdinalIgnoreCase);
+
+        if (request.ReplaceExisting)
+        {
+            await context.ServiceTicketChecklistItems
+                .Where(item => item.ShopId == shopId && item.ServiceTicketId == id)
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+        else
+        {
+            var existing = await context.ServiceTicketChecklistItems
+                .AsNoTracking()
+                .Where(item => item.ShopId == shopId && item.ServiceTicketId == id)
+                .Select(item => new { item.Title, item.SortOrder })
+                .ToListAsync(cancellationToken);
+            if (existing.Count > 0)
+            {
+                nextOrder = existing.Max(item => item.SortOrder) + 1;
+                existingTitles = existing.Select(item => item.Title.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        var itemsToAdd = template.ChecklistItems
             .OrderBy(item => item.SortOrder)
+            .Where(item => request.ReplaceExisting || !existingTitles.Contains(item.Title.Trim()))
             .Select(item => new ServiceTicketChecklistItem
             {
                 ShopId = shopId,
@@ -2982,12 +3098,52 @@ public static class ServiceTicketEndpoints
                 ServiceTemplateId = template.Id,
                 Title = item.Title,
                 Description = item.Description,
-                SortOrder = item.SortOrder
-            }));
-        await context.SaveChangesAsync(cancellationToken);
+                SortOrder = nextOrder++
+            })
+            .ToList();
+
+        if (itemsToAdd.Count > 0)
+        {
+            context.ServiceTicketChecklistItems.AddRange(itemsToAdd);
+            await context.SaveChangesAsync(cancellationToken);
+        }
+
         await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Template applied: {template.Name}", cancellationToken: cancellationToken);
         await activityLogger.LogAsync(EntityType, id, "TicketTemplateApplied", $"Template applied: {template.Name}", cancellationToken: cancellationToken);
         return Results.NoContent();
+    }
+
+    private static async Task<IResult> AddChecklistItemAsync(int id, [FromBody] CreateChecklistItemRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    {
+        var title = TrimOrNull(request.Title);
+        if (title is null) return Results.BadRequest("Checklist item title is required.");
+        if (title.Length > 200) return Results.BadRequest("Checklist item title must be 200 characters or fewer.");
+        var description = TrimOrNull(request.Description);
+        if (description is { Length: > 500 }) return Results.BadRequest("Checklist item description must be 500 characters or fewer.");
+
+        var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
+        if (!await TicketExistsAsync(context, shopId, id, cancellationToken)) return Results.NotFound();
+
+        var maxSortOrder = await context.ServiceTicketChecklistItems
+            .Where(item => item.ShopId == shopId && item.ServiceTicketId == id)
+            .Select(item => (int?)item.SortOrder)
+            .MaxAsync(cancellationToken) ?? 0;
+
+        var checklistItem = new ServiceTicketChecklistItem
+        {
+            ShopId = shopId,
+            ServiceTicketId = id,
+            Title = title,
+            Description = description,
+            SortOrder = maxSortOrder + 1
+        };
+        context.ServiceTicketChecklistItems.Add(checklistItem);
+        await context.SaveChangesAsync(cancellationToken);
+
+        await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Checklist item added: {checklistItem.Title}", cancellationToken: cancellationToken);
+        await activityLogger.LogAsync(EntityType, id, "TicketChecklistItemAdded", $"Checklist item added: {checklistItem.Title}", cancellationToken: cancellationToken);
+        return Results.Created($"/api/v1/service-tickets/{id}/checklist/{checklistItem.Id}",
+            new ChecklistItemDto(checklistItem.Id, checklistItem.Title, checklistItem.Description, checklistItem.SortOrder, checklistItem.IsCompleted, checklistItem.CompletedAt));
     }
 
     private static async Task<IResult> UpdateChecklistItemAsync(int id, int checklistItemId, [FromBody] UpdateChecklistItemRequest request, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
@@ -3002,6 +3158,21 @@ public static class ServiceTicketEndpoints
         await context.SaveChangesAsync(cancellationToken);
         await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Checklist updated: {item.Title}", cancellationToken: cancellationToken);
         await activityLogger.LogAsync(EntityType, id, "TicketChecklistUpdated", $"Checklist updated: {item.Title}", cancellationToken: cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> DeleteChecklistItemAsync(int id, int checklistItemId, AppDbContext context, IShopContext shopContext, IActivityLogger activityLogger, ClaimsPrincipal principal, CancellationToken cancellationToken)
+    {
+        var shopId = await shopContext.GetCurrentShopIdAsync(cancellationToken);
+        var item = await context.ServiceTicketChecklistItems
+            .FirstOrDefaultAsync(item => item.Id == checklistItemId && item.ServiceTicketId == id && item.ShopId == shopId, cancellationToken);
+        if (item is null) return Results.NotFound();
+
+        var deletedTitle = item.Title;
+        context.ServiceTicketChecklistItems.Remove(item);
+        await context.SaveChangesAsync(cancellationToken);
+        await AddHistoryAsync(context, principal, shopId, id, TicketHistoryEventType.Updated, note: $"Checklist item deleted: {deletedTitle}", cancellationToken: cancellationToken);
+        await activityLogger.LogAsync(EntityType, id, "TicketChecklistItemDeleted", $"Checklist item deleted: {deletedTitle}", cancellationToken: cancellationToken);
         return Results.NoContent();
     }
 
@@ -3566,7 +3737,9 @@ public static class ServiceTicketEndpoints
         UpsertWorkItemRequest request,
         out WorkItemType itemType,
         out string? title,
-        out string? description)
+        out string? description,
+        out string? bonusTaskKey,
+        out string? deviceCategoryOverride)
     {
         var errors = new List<(string Field, string Message)>();
         if (!TryParseWorkItemType(request.ItemType, out itemType))
@@ -3588,6 +3761,32 @@ public static class ServiceTicketEndpoints
         if (description is { Length: > 1000 })
         {
             errors.Add(("description", "Description must be 1000 characters or fewer."));
+        }
+
+        bonusTaskKey = string.IsNullOrWhiteSpace(request.BonusTaskKey)
+            ? null
+            : BonusTaskDefinitionEndpoints.NormalizeTaskKey(request.BonusTaskKey);
+        if (bonusTaskKey is { Length: 0 })
+        {
+            bonusTaskKey = null;
+        }
+
+        deviceCategoryOverride = null;
+        var rawCategory = TrimOrNull(request.DeviceCategoryOverride);
+        if (rawCategory is not null && !rawCategory.Equals("Auto", StringComparison.OrdinalIgnoreCase))
+        {
+            if (rawCategory.Equals("Standard", StringComparison.OrdinalIgnoreCase))
+            {
+                deviceCategoryOverride = "Standard";
+            }
+            else if (rawCategory.Equals("Gaming", StringComparison.OrdinalIgnoreCase))
+            {
+                deviceCategoryOverride = "Gaming";
+            }
+            else
+            {
+                errors.Add(("deviceCategoryOverride", "Asset tier override must be Auto, Standard, or Gaming."));
+            }
         }
 
         if (request.Quantity <= 0m)
@@ -3622,11 +3821,26 @@ public static class ServiceTicketEndpoints
         item.Description,
         item.Quantity,
         item.UnitPrice,
-        TicketBillingCalculator.ComputeLineTotal(item.Quantity, item.UnitPrice),
+        item.IsInternalOnly ? 0m : TicketBillingCalculator.ComputeLineTotal(item.Quantity, item.UnitPrice),
         item.Status.ToString(),
         item.IsCompleted,
         item.CreatedAt,
-        item.UpdatedAt);
+        item.UpdatedAt,
+        item.BonusTaskKey,
+        item.AssignedTechnicianUserId,
+        FormatUserName(item.AssignedTechnicianUser),
+        item.CompletedByUserId,
+        FormatUserName(item.CompletedByUser),
+        item.CompletedAt,
+        item.DeviceCategoryOverride,
+        item.IsInternalOnly);
+
+    private static string? FormatUserName(Servora.Api.Features.Identity.Users.ApplicationUser? user)
+    {
+        if (user is null) return null;
+        var fullName = $"{user.FirstName} {user.LastName}".Trim();
+        return string.IsNullOrWhiteSpace(fullName) ? user.Email : fullName;
+    }
 
     private static bool TryParsePriority(string? value, out ServiceTicketPriority priority)
     {

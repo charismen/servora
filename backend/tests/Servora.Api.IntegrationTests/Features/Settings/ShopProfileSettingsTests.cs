@@ -116,4 +116,27 @@ public class ShopProfileSettingsTests : IClassFixture<IntegrationTestWebAppFacto
         var path = Path.Combine(Directory.GetCurrentDirectory(), logoUrl.TrimStart('/'));
         if (File.Exists(path)) File.Delete(path);
     }
+
+    [Fact]
+    public async Task UpdateShopProfileSettings_WithMultiplierTaxMode_ShouldPersistAndResetToPercentage()
+    {
+        var current = await _client.GetFromJsonAsync<ShopProfileSettings>("/api/v1/settings/shop-profile");
+        current.Should().NotBeNull();
+
+        var updateResponse = await _client.PutAsJsonAsync("/api/v1/settings/shop-profile", current! with
+        {
+            InventoryDefaultTaxPercent = 0.5m,
+            InventoryDefaultTaxMode = "Multiplier"
+        });
+        updateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var updated = await updateResponse.Content.ReadFromJsonAsync<ShopProfileSettings>();
+        updated!.InventoryDefaultTaxPercent.Should().Be(0.5m);
+        updated.InventoryDefaultTaxMode.Should().Be("Multiplier");
+
+        var reset = await _client.PostAsync("/api/v1/settings/shop-profile/reset-defaults", null);
+        reset.StatusCode.Should().Be(HttpStatusCode.OK);
+        var restored = await reset.Content.ReadFromJsonAsync<ShopProfileSettings>();
+        restored!.InventoryDefaultTaxMode.Should().Be("Percentage");
+    }
 }

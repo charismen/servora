@@ -1,6 +1,16 @@
 import { fail } from '@sveltejs/kit';
 import { serverApiRequest, ServerApiError } from '$lib/server/api';
-import type { BonusType, ShopPermission, ShopRole, ShopUser, ShopUserPage, WageTierBracket } from '$lib/types/shop-users';
+import type {
+	BonusTaskDefinition,
+	BonusType,
+	CompensationTemplate,
+	FreelancePayPolicy,
+	ShopPermission,
+	ShopRole,
+	ShopUser,
+	ShopUserPage,
+	WageTierBracket
+} from '$lib/types/shop-users';
 import type { Actions, PageServerLoad } from './$types';
 
 const VALID_SORTS = new Set(['name-asc', 'name-desc', 'email-asc', 'status-asc']);
@@ -33,12 +43,14 @@ export const load: PageServerLoad = async ({ parent, cookies, fetch, url }) => {
 	});
 	if (search) query.set('search', search);
 
-	const [backendUsersPage, directoryPage, roles, permissions, bonusTypes] = await Promise.all([
+	const [backendUsersPage, directoryPage, roles, permissions, bonusTypes, bonusTasks, compensationTemplates] = await Promise.all([
 		hasLocalFilters ? Promise.resolve(null) : serverApiRequest<ShopUserPage>(fetch, `/shop-users?${query}`, { token }),
 		serverApiRequest<ShopUserPage>(fetch, '/shop-users?page=1&pageSize=100&sort=name-asc', { token }),
 		serverApiRequest<ShopRole[]>(fetch, '/shop-users/roles', { token }),
 		serverApiRequest<ShopPermission[]>(fetch, '/shop-users/permissions', { token }),
-		serverApiRequest<BonusType[]>(fetch, '/shop-users/bonus-types', { token }).catch(() => [])
+		serverApiRequest<BonusType[]>(fetch, '/shop-users/bonus-types', { token }).catch(() => []),
+		serverApiRequest<BonusTaskDefinition[]>(fetch, '/bonus-tasks', { token }).catch(() => []),
+		serverApiRequest<CompensationTemplate[]>(fetch, '/compensation-templates', { token }).catch(() => [])
 	]);
 
 	let users: ShopUserPage;
@@ -79,6 +91,8 @@ export const load: PageServerLoad = async ({ parent, cookies, fetch, url }) => {
 		roles,
 		permissions,
 		bonusTypes,
+		bonusTasks,
+		compensationTemplates,
 		summary: {
 			totalUsers: directoryPage.totalItems || directoryPage.items.length,
 			activeUsers: activeCount,
@@ -248,12 +262,26 @@ export const actions: Actions = {
 		const cancellationRequireEvidence = form.get('cancellationRequireEvidence') === 'on';
 
 		const taskItemizedActive = form.get('taskItemizedActive') === 'on';
+		const taskPayoutTrigger = String(form.get('taskPayoutTrigger') ?? 'TicketFinalized');
 		const taskItemizedRulesRaw = String(form.get('taskItemizedRulesJson') ?? '[]');
 		let taskItemizedRules = [];
 		try {
 			taskItemizedRules = JSON.parse(taskItemizedRulesRaw);
 		} catch {
 			taskItemizedRules = [];
+		}
+
+		const compensationTemplateIdRaw = Number(form.get('compensationTemplateId') ?? 0);
+		const compensationTemplateId = Number.isInteger(compensationTemplateIdRaw) && compensationTemplateIdRaw > 0
+			? compensationTemplateIdRaw
+			: null;
+
+		const payPolicyRaw = String(form.get('payPolicyJson') ?? '{}');
+		let payPolicy: FreelancePayPolicy = {};
+		try {
+			payPolicy = JSON.parse(payPolicyRaw) as FreelancePayPolicy;
+		} catch {
+			payPolicy = {};
 		}
 
 		const bonusConfigs = [
@@ -282,6 +310,7 @@ export const actions: Actions = {
 				bonusTypeCode: 'TASK_ITEMIZED',
 				isActive: taskItemizedActive,
 				parameters: {
+					payoutTrigger: taskPayoutTrigger === 'TaskCompleted' ? 'TaskCompleted' : 'TicketFinalized',
 					rules: taskItemizedRules
 				}
 			}
@@ -292,8 +321,22 @@ export const actions: Actions = {
 			`/shop-users/${userId}/freelance-profile`,
 			'PUT',
 			token,
-			{ basePayMode, baseHourlyRate, tieredRates, bonusConfigs },
+			{ basePayMode, baseHourlyRate, tieredRates, bonusConfigs, compensationTemplateId, payPolicy },
 			'settings.freelanceProfileSaved'
+		);
+	},
+	applyTemplate: async ({ request, cookies, fetch }) => {
+		const token = cookies.get('servora_session');
+		const form = await request.formData();
+		const userId = Number(form.get('userId'));
+		const templateId = Number(form.get('templateId'));
+		return save(
+			fetch,
+			`/compensation-templates/${templateId}/apply/${userId}`,
+			'POST',
+			token,
+			{},
+			'settings.templateAppliedToWorker'
 		);
 	},
 	setStatus: async ({ request, cookies, fetch }) => {

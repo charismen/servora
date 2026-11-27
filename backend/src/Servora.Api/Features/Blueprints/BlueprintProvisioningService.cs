@@ -5,6 +5,7 @@ using Servora.Api.Features.Devices;
 using Servora.Api.Features.Dispatch;
 using Servora.Api.Features.Maintenance;
 using Servora.Api.Features.Notifications;
+using Servora.Api.Features.Payroll;
 using Servora.Api.Features.ServiceStatuses;
 using Servora.Api.Features.ServiceTemplates;
 using Servora.Api.Features.ServiceTickets;
@@ -247,6 +248,9 @@ public sealed class BlueprintProvisioningService
                 });
         }
 
+        // 7. Starter Bonus Task Definitions & Compensation Templates (blueprint-aware, only if none exist yet)
+        await EnsureStarterCompensationCatalogAsync(workspace, blueprint, cancellationToken);
+
         await _context.SaveChangesAsync(cancellationToken);
     }
 
@@ -424,5 +428,166 @@ public sealed class BlueprintProvisioningService
                 Value = value
             });
         }
+    }
+
+    private async Task EnsureStarterCompensationCatalogAsync(Shop workspace, IndustryBlueprintDefinition blueprint, CancellationToken cancellationToken)
+    {
+        var hasTasks = await _context.BonusTaskDefinitions
+            .AnyAsync(t => t.ShopId == workspace.Id, cancellationToken);
+
+        var starterTasks = GetStarterBonusTasks(workspace, blueprint.Key);
+        if (!hasTasks)
+        {
+            _context.BonusTaskDefinitions.AddRange(starterTasks);
+        }
+
+        var hasTemplates = await _context.CompensationTemplates
+            .AnyAsync(t => t.ShopId == workspace.Id, cancellationToken);
+
+        if (!hasTemplates)
+        {
+            var isInternal = workspace.OperatingMode == OperatingMode.InternalMaintenance;
+            var taskRulesJson = JsonSerializer.Serialize(new
+            {
+                payoutTrigger = "TicketFinalized",
+                rules = starterTasks.SelectMany(task =>
+                {
+                    if (task.DefaultGamingRate > 0m && task.DefaultGamingRate != task.DefaultStandardRate)
+                    {
+                        return new object[]
+                        {
+                            new
+                            {
+                                taskKey = task.TaskKey,
+                                taskLabel = task.Label,
+                                matcherKeyword = task.LegacyKeywords ?? task.Label,
+                                deviceCategory = "Standard",
+                                rewardPerUnit = task.DefaultStandardRate
+                            },
+                            new
+                            {
+                                taskKey = task.TaskKey,
+                                taskLabel = task.Label,
+                                matcherKeyword = task.LegacyKeywords ?? task.Label,
+                                deviceCategory = "Gaming",
+                                rewardPerUnit = task.DefaultGamingRate
+                            }
+                        };
+                    }
+
+                    return new object[]
+                    {
+                        new
+                        {
+                            taskKey = task.TaskKey,
+                            taskLabel = task.Label,
+                            matcherKeyword = task.LegacyKeywords ?? task.Label,
+                            deviceCategory = "Any",
+                            rewardPerUnit = task.DefaultStandardRate
+                        }
+                    };
+                }).ToList()
+            }, IndustryBlueprintCatalog.JsonOptions);
+
+            var technicianBonusesJson = JsonSerializer.Serialize(new object[]
+            {
+                new
+                {
+                    bonusTypeCode = BonusTypeCodes.TaskItemized,
+                    isActive = true,
+                    parameters = JsonSerializer.Deserialize<JsonElement>(taskRulesJson)
+                },
+                new
+                {
+                    bonusTypeCode = BonusTypeCodes.MaintenanceCompletion,
+                    isActive = true,
+                    parameters = new
+                    {
+                        threshold = 4,
+                        rewardPerUnit = 15000m,
+                        flatReward = 0m,
+                        countAllUnitsOnceThresholdMet = false,
+                        mode = "Simple",
+                        isRetroactive = false
+                    }
+                }
+            }, IndustryBlueprintCatalog.JsonOptions);
+
+            _context.CompensationTemplates.AddRange(
+                new CompensationTemplate
+                {
+                    ShopId = workspace.Id,
+                    Name = isInternal ? "Field Maintenance Technician (Tiered Daily)" : "Junior / Standard Technician (Tiered Daily + Task Bonus)",
+                    Description = "Daily shift tiers combined with itemized task completion bonuses.",
+                    BasePayMode = BasePayMode.TieredDaily,
+                    BaseHourlyRate = 7500m,
+                    TieredRatesJson = FreelanceProfile.DefaultTieredRatesJson,
+                    PayPolicyJson = """{"fallbackStrategy":"ProratedHourly","weekendMultiplier":1.0,"taskBonusTrigger":"TicketFinalized"}""",
+                    BonusConfigsJson = technicianBonusesJson,
+                    IsActive = true,
+                    SortOrder = 10
+                },
+                new CompensationTemplate
+                {
+                    ShopId = workspace.Id,
+                    Name = isInternal ? "On-Call Specialist (Fixed Daily + Task Bonus)" : "Senior Specialist (Commission / Task Only)",
+                    Description = isInternal
+                        ? "Fixed daily standby rate plus itemized task completion bonuses."
+                        : "Pure commission & itemized task bonus structure without hourly base pay.",
+                    BasePayMode = isInternal ? BasePayMode.FixedDaily : BasePayMode.CommissionOnly,
+                    BaseHourlyRate = 0m,
+                    TieredRatesJson = "[]",
+                    PayPolicyJson = isInternal
+                        ? """{"fixedDailyRate":100000,"weekendMultiplier":1.25,"taskBonusTrigger":"TicketFinalized"}"""
+                        : """{"fallbackStrategy":"Zero","taskBonusTrigger":"TicketFinalized"}""",
+                    BonusConfigsJson = technicianBonusesJson,
+                    IsActive = true,
+                    SortOrder = 20
+                }
+            );
+        }
+    }
+
+    private static List<BonusTaskDefinition> GetStarterBonusTasks(Shop workspace, string blueprintKey)
+    {
+        var isInternal = workspace.OperatingMode == OperatingMode.InternalMaintenance;
+
+        return blueprintKey switch
+        {
+            "mobile_phone" =>
+            [
+                new() { ShopId = workspace.Id, TaskKey = "SCREEN_REPLACE", Label = "Display / LCD Replacement", Category = "Hardware", DefaultStandardRate = 25000m, DefaultGamingRate = 45000m, DefaultCustomerPrice = isInternal ? 0m : 150000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "LCD,Screen,Display,OLED", IsActive = true, SortOrder = 10 },
+                new() { ShopId = workspace.Id, TaskKey = "BATTERY_REPLACE", Label = "Battery Replacement", Category = "Hardware", DefaultStandardRate = 20000m, DefaultGamingRate = 30000m, DefaultCustomerPrice = isInternal ? 0m : 100000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Battery,Baterai", IsActive = true, SortOrder = 20 },
+                new() { ShopId = workspace.Id, TaskKey = "PORT_REPAIR", Label = "Charging Port / IC Repair", Category = "Board", DefaultStandardRate = 30000m, DefaultGamingRate = 55000m, DefaultCustomerPrice = isInternal ? 0m : 175000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Charging,Port,USB,IC", IsActive = true, SortOrder = 30 },
+                new() { ShopId = workspace.Id, TaskKey = "OS_FLASH", Label = "Firmware / OS Flashing & Data Recovery", Category = "Software", DefaultStandardRate = 20000m, DefaultGamingRate = 35000m, DefaultCustomerPrice = isInternal ? 0m : 120000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Flash,Firmware,OS,Software", IsActive = true, SortOrder = 40 }
+            ],
+            "automotive_vehicle" =>
+            [
+                new() { ShopId = workspace.Id, TaskKey = "OIL_FILTER_SERVICE", Label = "Periodic Oil & Filter Change", Category = "Maintenance", DefaultStandardRate = 25000m, DefaultGamingRate = 45000m, DefaultCustomerPrice = isInternal ? 0m : 150000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Oil,Oli,Filter,Tune Up", IsActive = true, SortOrder = 10 },
+                new() { ShopId = workspace.Id, TaskKey = "BRAKE_SERVICE", Label = "Brake Pad / Rotor Inspection & Service", Category = "Safety", DefaultStandardRate = 30000m, DefaultGamingRate = 50000m, DefaultCustomerPrice = isInternal ? 0m : 180000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Brake,Rem,Rotor,Pad", IsActive = true, SortOrder = 20 },
+                new() { ShopId = workspace.Id, TaskKey = "AC_SERVICE", Label = "Vehicle AC Recharge & Compressor Check", Category = "Climate", DefaultStandardRate = 35000m, DefaultGamingRate = 60000m, DefaultCustomerPrice = isInternal ? 0m : 220000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "AC,Freon,Compressor", IsActive = true, SortOrder = 30 },
+                new() { ShopId = workspace.Id, TaskKey = "ENGINE_DIAGNOSTIC", Label = "OBD-II Diagnostic Scan & Fault Analysis", Category = "Diagnostics", DefaultStandardRate = 25000m, DefaultGamingRate = 40000m, DefaultCustomerPrice = isInternal ? 0m : 125000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "OBD,Diagnostic,Scan,Engine", IsActive = true, SortOrder = 40 }
+            ],
+            "hvac_ac" =>
+            [
+                new() { ShopId = workspace.Id, TaskKey = "COIL_CLEANING", Label = "Indoor & Outdoor Coil Wash", Category = "Maintenance", DefaultStandardRate = 25000m, DefaultGamingRate = 50000m, DefaultCustomerPrice = isInternal ? 0m : 120000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Wash,Cuci,Coil,Cleaning", IsActive = true, SortOrder = 10 },
+                new() { ShopId = workspace.Id, TaskKey = "REFRIGERANT_RECHARGE", Label = "Refrigerant Pressure Check & Top-Up", Category = "Maintenance", DefaultStandardRate = 30000m, DefaultGamingRate = 55000m, DefaultCustomerPrice = isInternal ? 0m : 200000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Freon,Refrigerant,R32,R410", IsActive = true, SortOrder = 20 },
+                new() { ShopId = workspace.Id, TaskKey = "UNIT_INSTALL", Label = "AC Unit Installation / Relocation", Category = "Installation", DefaultStandardRate = 60000m, DefaultGamingRate = 110000m, DefaultCustomerPrice = isInternal ? 0m : 450000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Install,Pasang,Bongkar,Relocation", IsActive = true, SortOrder = 30 },
+                new() { ShopId = workspace.Id, TaskKey = "COMPRESSOR_REPAIR", Label = "Compressor / PCB Repair", Category = "Repair", DefaultStandardRate = 50000m, DefaultGamingRate = 90000m, DefaultCustomerPrice = isInternal ? 0m : 350000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Compressor,PCB,Inverter,Capacitor", IsActive = true, SortOrder = 40 }
+            ],
+            "facility_internal" =>
+            [
+                new() { ShopId = workspace.Id, TaskKey = "PM_INSPECTION", Label = "Scheduled Preventive Inspection", Category = "Preventive", DefaultStandardRate = 25000m, DefaultGamingRate = 45000m, DefaultCustomerPrice = 0m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = true, LegacyKeywords = "Preventive,Inspection,PM,Load Test", IsActive = true, SortOrder = 10 },
+                new() { ShopId = workspace.Id, TaskKey = "ELECTRICAL_CHECK", Label = "Electrical Panel & Safety Test", Category = "Electrical", DefaultStandardRate = 30000m, DefaultGamingRate = 55000m, DefaultCustomerPrice = 0m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = true, LegacyKeywords = "Electrical,Panel,Breaker,Safety", IsActive = true, SortOrder = 20 },
+                new() { ShopId = workspace.Id, TaskKey = "CORRECTIVE_REPAIR", Label = "Corrective Equipment Overhaul", Category = "Repair", DefaultStandardRate = 40000m, DefaultGamingRate = 75000m, DefaultCustomerPrice = 0m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = true, LegacyKeywords = "Overhaul,Corrective,Repair,Replace", IsActive = true, SortOrder = 30 }
+            ],
+            _ => // it_computer & custom default
+            [
+                new() { ShopId = workspace.Id, TaskKey = "OS_INSTALL", Label = "OS / Software Reinstallation", Category = "Software", DefaultStandardRate = 25000m, DefaultGamingRate = 25000m, DefaultCustomerPrice = isInternal ? 0m : 100000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "OS,Install OS,Clean Install,OS Reinstall,Reinstall OS,Windows", IsActive = true, SortOrder = 10 },
+                new() { ShopId = workspace.Id, TaskKey = "KEYBOARD_SWAP", Label = "Keyboard Replacement", Category = "Hardware", DefaultStandardRate = 25000m, DefaultGamingRate = 35000m, DefaultCustomerPrice = isInternal ? 0m : 150000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Keyboard,Ganti Keyboard", IsActive = true, SortOrder = 20 },
+                new() { ShopId = workspace.Id, TaskKey = "BATTERY_SWAP", Label = "Battery Replacement", Category = "Hardware", DefaultStandardRate = 25000m, DefaultGamingRate = 25000m, DefaultCustomerPrice = isInternal ? 0m : 100000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Battery Replacement,Replace Battery,New Battery,Swap Battery,Ganti Baterai,Tukar Baterai,Pasang Baterai", IsActive = true, SortOrder = 30 },
+                new() { ShopId = workspace.Id, TaskKey = "CLEANING_REPASTE", Label = "Cleaning & Thermal Repasting", Category = "Maintenance", DefaultStandardRate = 25000m, DefaultGamingRate = 50000m, DefaultCustomerPrice = isInternal ? 0m : 150000m, DefaultWorkItemType = WorkItemType.Service, DefaultIsInternalOnly = isInternal, LegacyKeywords = "Repaste,Repasting,Cleaning,Clean Dust,Thermal,Pasta", IsActive = true, SortOrder = 40 }
+            ]
+        };
     }
 }
